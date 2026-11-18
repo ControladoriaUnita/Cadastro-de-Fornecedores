@@ -26,7 +26,7 @@ import {
   UAU_ROUTES,
 } from '../../../shared/domain/uau-payload'
 import { schema } from '../../infrastructure/db/client'
-import { uauAttachmentFolder, uauUser } from '../../infrastructure/uau'
+import { uauAttachmentFolder, uauCompany, uauUser } from '../../infrastructure/uau'
 import { AppError, requirePermission } from '../context'
 import { notifyAddresses } from '../notifications'
 import type { UauCallResult, UseCaseDeps } from '../ports'
@@ -91,7 +91,7 @@ export async function uauPreview(deps: UseCaseDeps, requestId: string): Promise<
         : joinFolder(uauAttachmentFolder(), supplierFolderName(0, folderName(detail.supplier)).replace(/^0 - /, '<código> - '))
       const body = buildAttachBody(
         docs.map((d) => ({ fileName: d.fileName, extension: EXT[d.mime] ?? 'pdf', base64: `<${d.size} bytes>` })),
-        { codPes: codPlaceholder, folder, user: uauUser() },
+        { codPes: codPlaceholder, folder, user: uauUser(), company: uauCompany() },
       )
       steps.push({ route: UAU_ROUTES.attachFiles, description: `Anexa ${docs.length} documento(s) aprovado(s)`, body })
     }
@@ -180,12 +180,13 @@ export async function approveRequest(deps: UseCaseDeps, requestId: string) {
           codPes: codPes ?? 0,
           folder: codPes ? await resolveAttachmentFolder(deps, codPes, folderName(detail.supplier)) : joinFolder(uauAttachmentFolder(), '<simulação>'),
           user,
+          company: uauCompany(),
         }),
       )
       calls.push({ ...r, data: r.simulated ? undefined : r.data, description: `Anexos (${toAttach.length})` })
       if (r.ok && !r.simulated) {
         await deps.db.update(documents).set({ uauAttachedAt: now }).where(inArray(documents.id, toAttach.map((d) => d.id)))
-      } else if (!r.simulated) warnings.push(`Anexos: HTTP ${r.status}`)
+      } else if (!r.simulated) warnings.push(`Anexos: HTTP ${r.status}${uauMessage(r.data)}`)
     } catch (err) {
       warnings.push(`Anexos: ${err instanceof Error ? err.message : 'falhou'}`)
     }
@@ -226,4 +227,13 @@ export async function approveRequest(deps: UseCaseDeps, requestId: string) {
     requestId,
   })
   return getRequest(deps, requestId)
+}
+
+/** Motivo que o UAU devolve na recusa (Descricao/Mensagem), para o histórico. */
+function uauMessage(data: unknown): string {
+  const first = Array.isArray(data) ? data[0] : data
+  if (!first || typeof first !== 'object') return ''
+  const o = first as Record<string, unknown>
+  const msg = [o.Descricao, o.Mensagem].find((v) => typeof v === 'string' && v.trim())
+  return msg ? ` — ${String(msg).replace(/\s+/g, ' ').trim().slice(0, 300)}` : ''
 }

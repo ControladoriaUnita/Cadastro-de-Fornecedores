@@ -155,14 +155,15 @@ describe('payload do UAU', () => {
   })
   it('monta GravarPessoa para PJ, confirmada e ativa', () => {
     const body = buildSavePersonBody(profile, { user: 'API', now: new Date('2026-01-01T00:00:00Z') })
-    expect(body.info_pes[0]).toMatchObject({ cod_pes: 0, tipo_pes: 1, cpf_pes: '11222333000181', status_pes: 2, atinat_pes: 0, nome_pes: 'CONSTRUTORA EXEMPLO LTDA', email_pes: 'contato@exemplo.com.br' })
+    expect(body.info_pes).toMatchObject({ cod_pes: 0, tipo_pes: 1, cpf_pes: '11222333000181', status_pes: 2, atinat_pes: 0, nome_pes: 'CONSTRUTORA EXEMPLO LTDA', email_pes: 'contato@exemplo.com.br' })
     expect('infopes_jur' in body).toBe(true)
-    expect(body.info_pesendereco_principal[0]).toMatchObject({ Tipo_pend: 0, CEP_pend: '01310100', UF_pend: 'SP' })
+    expect(body.info_pesendereco_principal).toMatchObject({ Tipo_pend: 0, CEP_pend: '01310100', UF_pend: 'SP' })
   })
   it('monta conta bancária e anexos', () => {
     expect(buildBankBody(profile, 123)).toMatchObject({ codigoPessoa: 123, banco: 341, padrao: true, tipo: 0 })
-    const att = buildAttachBody([{ fileName: 'cnpj.pdf', extension: 'pdf', base64: 'AAA' }], { codPes: 123, folder: 'FORN\\1', user: 'API' })
-    expect(att.lista_arquivos[0]).toMatchObject({ Identificador: 'Pessoas 123', Origem: 1 })
+    const att = buildAttachBody([{ fileName: 'cnpj.pdf', extension: 'pdf', base64: 'AAA' }], { codPes: 123, folder: 'FORN\\1', user: 'API', company: 1 })
+    expect(att).toMatchObject({ empresa: 1 })
+    expect(att.lista_arquivos[0]).toMatchObject({ Identificador: 'Pessoas 123', Origem: 1, NomeArquivo: 'cnpj', Extension: 'pdf' })
   })
   it('lê o código da pessoa em formatos diferentes', () => {
     expect(extractPersonCode([{ cod_pes: 77 }])).toBe(77)

@@ -44,3 +44,5 @@ export function getUauGateway(): UauGateway {
 /** Usuário gravado como "cadastrado por" no UAU. */
 export const uauUser = () => envValue('UAU_USUARIO_CADASTRO') ?? envValue('UAU_LOGIN') ?? 'API'
 export const uauAttachmentFolder = () => envValue('UAU_PASTA_ANEXOS') ?? 'FORNECEDORES'
+/** Empresa registrada no histórico dos anexos (obrigatória no UAU). 1 = UNITÀ ENGENHARIA SA. */
+export const uauCompany = () => Number(envValue('UAU_EMPRESA') ?? 1) || 1

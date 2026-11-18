@@ -28,6 +28,28 @@ export const UAU_EXTERNO = 2
 
 const cut = (v: string | null | undefined, max: number) => (v ? v.slice(0, max) : undefined)
 
+/**
+ * GravarPessoa é um método antigo do UAU: `dspes_tel_json` precisa vir como texto JSON cuja PRIMEIRA
+ * linha é sempre esta estrutura de tipos .NET (Swagger, descrição da rota); sem ela o UAU devolve HTTP 500.
+ * Os telefones em si vão depois, por Pessoas/ManterTelefone.
+ */
+const NET = (t: string) => `System.${t}, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089`
+export const UAU_PHONE_JSON_HEADER = JSON.stringify([
+  {
+    PesTel: [
+      {
+        ddd_tel: NET('String'),
+        fone_tel: NET('String'),
+        ram_tel: NET('String'),
+        tipo_tel: NET('Byte'),
+        TipoTel_tel: NET('String'),
+        ExisteTel_tel: NET('Boolean'),
+        Principal_tel: NET('Byte'),
+      },
+    ],
+  },
+])
+
 export function buildSavePersonBody(p: SupplierProfile, opts: { user: string; now: Date }) {
   const pj = p.document.length === 14
   const address = {
@@ -43,31 +65,31 @@ export function buildSavePersonBody(p: SupplierProfile, opts: { user: string; no
   }
   return {
     nao_validar_campos_obrigatorios: false,
-    info_pes: [
-      {
-        cod_pes: 0,
-        nome_pes: p.legalName.toUpperCase().slice(0, 100),
-        tipo_pes: pj ? 1 : 0,
-        cpf_pes: onlyDigits(p.document),
-        dtcad_pes: opts.now.toISOString(),
-        intext_pes: UAU_EXTERNO,
-        usrcad_pes: opts.user,
-        status_pes: UAU_STATUS_CONFIRMADO,
-        atinat_pes: 0,
-        email_pes: p.email,
-        endwww_pes: p.website ?? undefined,
-        nomefant_pes: p.tradeName?.toUpperCase() ?? undefined,
-        inscrest_pes: p.stateRegistration ?? undefined,
-        inscrmunic_pes: p.municipalRegistration ?? undefined,
-        cnae_pes: p.mainCnae ? onlyDigits(p.mainCnae) : undefined,
-        cadastradoprefeituragyn_pes: false,
-        habilitadoriscosacado_pes: false,
-      },
-    ],
-    ...(pj
-      ? { infopes_jur: [{ cod_pj: 0, contato_pj: p.contactName ?? undefined, optantesimples_pj: p.simplesNacional ?? undefined }] }
-      : { info_pesfis: [{ cod_pf: 0 }] }),
-    info_pesendereco_principal: [address],
+    // Objetos, não listas (Swagger GravarPessoaRequest): lista chega vazia e o UAU responde "info_pes é obrigatório"
+    info_pes: {
+      cod_pes: 0,
+      nome_pes: p.legalName.toUpperCase().slice(0, 100),
+      tipo_pes: pj ? 1 : 0,
+      cpf_pes: onlyDigits(p.document),
+      dtcad_pes: opts.now.toISOString(),
+      intext_pes: UAU_EXTERNO,
+      usrcad_pes: opts.user,
+      status_pes: UAU_STATUS_CONFIRMADO,
+      atinat_pes: 0,
+      email_pes: p.email,
+      endwww_pes: p.website ?? undefined,
+      nomefant_pes: p.tradeName?.toUpperCase() ?? undefined,
+      inscrest_pes: p.stateRegistration ?? undefined,
+      inscrmunic_pes: p.municipalRegistration ?? undefined,
+      cnae_pes: p.mainCnae ? onlyDigits(p.mainCnae) : undefined,
+      cadastradoprefeituragyn_pes: false,
+      habilitadoriscosacado_pes: false,
+    },
+    // O exemplo oficial (Postman da Globaltec) manda SEMPRE os dois blocos; sem um deles o UAU devolve HTTP 500.
+    // O controller lê alguns números com .Value: vazios dão "O objeto nulo deve ter um valor" (HTTP 500).
+    info_pesfis: { cod_pf: 0, sexo_pf: 0, indicativofiscal_pf: 0 },
+    infopes_jur: { cod_pj: 0, natureza_pj: 0, contato_pj: pj ? (p.contactName ?? undefined) : undefined, optantesimples_pj: pj ? (p.simplesNacional ?? undefined) : undefined },    info_pesendereco_principal: address,
+    dspes_tel_json: UAU_PHONE_JSON_HEADER,
   }
 }
 
@@ -98,12 +120,17 @@ export interface AttachmentInput {
   base64: string
 }
 
-export function buildAttachBody(files: AttachmentInput[], opts: { codPes: number; folder: string; user: string }) {
+const stripExtension = (name: string, ext: string) => (name.toLowerCase().endsWith(`.${ext.toLowerCase()}`) ? name.slice(0, -(ext.length + 1)) : name)
+
+export function buildAttachBody(files: AttachmentInput[], opts: { codPes: number; folder: string; user: string; company: number }) {
   return {
     usuario: opts.user,
+    // Sem empresa o UAU recusa (FK_HistoricoArquivoVinculado_Empresas)
+    empresa: opts.company,
     lista_arquivos: files.map((f) => ({
       ConteudoArquivo: f.base64,
-      NomeArquivo: f.fileName,
+      // O UAU acrescenta a extensão: mandar sem ela (senão vira "x.pdf.pdf")
+      NomeArquivo: stripExtension(f.fileName, f.extension),
       Extension: f.extension,
       CaminhoArquivo: opts.folder,
       Identificador: `Pessoas ${opts.codPes}`,

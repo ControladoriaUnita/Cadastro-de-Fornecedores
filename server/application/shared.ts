@@ -111,7 +111,13 @@ export async function saveDocument(db: Db, storage: FileStorage, input: UploadIn
   }
 
   const hash = sha256(data)
-  const safeName = input.file.name.replace(/[^\w.\- ]+/g, '_').slice(-120) || `documento.${EXT[mime]}`
+  // Tira os acentos antes (Certidão → Certidao); o que sobrar fora de [letras, números, . - espaço] vira _
+  const safeName =
+    input.file.name
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^\w.\- ]+/g, '_')
+      .slice(-120) || `documento.${EXT[mime]}`
   const key = `suppliers/${input.supplierId}/${now.getTime()}-${hash.slice(0, 12)}.${EXT[mime]}`
   await storage.put(key, data, mime)
 
