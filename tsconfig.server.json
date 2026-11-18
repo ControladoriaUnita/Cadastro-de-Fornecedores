@@ -16,5 +16,5 @@
     "types": ["node"],
     "resolveJsonModule": true
   },
-  "include": ["api", "server", "shared", "dev", "scripts/*.ts", "vite.config.mts", "vitest.config.mts", "drizzle.config.ts"]
+  "include": ["api", "server", "shared", "dev", "scripts/*.mts", "vite.config.mts", "vitest.config.mts", "drizzle.config.ts"]
 }
