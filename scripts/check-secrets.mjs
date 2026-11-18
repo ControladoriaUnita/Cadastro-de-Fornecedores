@@ -26,7 +26,9 @@ for (const envFile of ['.env.local', '.env']) {
 }
 
 const PATTERNS = [
-  { name: 'variável sensível preenchida', re: /^[ \t]*(UAU_INTEGRATION_TOKEN|UAU_PASSWORD|DATABASE_URL|SESSION_SECRET|GRAPH_CLIENT_SECRET|ENTRA_CLIENT_SECRET)[ \t]*=[ \t]*['"]?[^'"\s]{6,}/m },
+  { name: 'variável sensível preenchida', re: /^[ \t]*(UAU_INTEGRATION_TOKEN|UAU_PASSWORD|DATABASE_URL|SESSION_SECRET|GRAPH_CLIENT_SECRET|ENTRA_CLIENT_SECRET|BLOB_READ_WRITE_TOKEN|TRANSPARENCIA_API_KEY)[ \t]*=[ \t]*['"]?[^'"\s]{6,}/m },
+  { name: 'token do Vercel Blob', re: /vercel_blob_rw_[A-Za-z0-9]{8,}/ },
+  { name: 'connection string do Neon com senha', re: /postgres(ql)?:\/\/[^:\s]+:npg_[A-Za-z0-9]+@/ },
   { name: 'header X-INTEGRATION com valor fixo', re: /X-INTEGRATION-Authorization['"]?\s*[:=,]\s*['"]eyJ/i },
   { name: 'token JWE/JWT escrito no código', re: /['"`]eyJhbGciOi[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_.-]{20,}/ },
 ]
