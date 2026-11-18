@@ -1,0 +1,13 @@
+# Credenciais (Neon, UAU, Microsoft) nunca vão para o GitHub
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+!.env.example
+.vercel
+# Arquivos enviados em desenvolvimento (sem Vercel Blob)
+.data/
+*.log
+.DS_Store
+Thumbs.db
