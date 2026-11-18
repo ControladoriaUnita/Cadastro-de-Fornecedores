@@ -16,6 +16,7 @@ import {
   documentTypeSchema,
   evaluationSchema,
   importFromUauSchema,
+  uauSyncSchema,
   inviteSchema,
   modelSchema,
   optionalCommentSchema,
@@ -254,6 +255,7 @@ staff('GET', '/documents/:id/file', async (deps, c) => {
 
 // fornecedores e avaliações
 staff('GET', '/suppliers', (deps) => suppliersUC.listSuppliers(deps))
+staff('POST', '/suppliers/uau-sync', async (deps, c) => suppliersUC.syncFromUau(deps, parse(uauSyncSchema, await c.json())))
 staff('POST', '/suppliers/import', async (deps, c) => suppliersUC.importFromUau(deps, parse(importFromUauSchema, await c.json()).documents))
 staff('GET', '/suppliers/:id', async (deps, c) => suppliersUC.getSupplier(deps, id(c)))
 staff('PATCH', '/suppliers/:id', async (deps, c) => suppliersUC.updateSupplier(deps, id(c), parse(supplierUpdateSchema, await c.json())))

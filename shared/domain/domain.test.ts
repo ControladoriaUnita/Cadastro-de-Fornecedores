@@ -7,6 +7,7 @@ import { defaultRuleConfigs, evaluateRisk, type RiskFacts } from './risk'
 import { DEFAULT_ROLES, permissionsFor, PERMISSIONS, roleKeyFromName } from './roles'
 import { supplierProfileSchema } from './supplier'
 import { buildAttachBody, buildBankBody, buildSavePersonBody, extractPersonCode, findSupplierFolder, joinFolder, supplierFolderName } from './uau-payload'
+import { firstValidEmail, mapUauPerson, selectUauSuppliers } from './uau-suppliers'
 
 describe('CNPJ/CPF', () => {
   it('valida dígitos', () => {
@@ -175,5 +176,35 @@ describe('payload do UAU', () => {
     expect(findSupplierFolder(['5539 - PLUMA ICAMENTOS LTDA', '55390 - OUTRA', '940 - Mastermade'], 940)).toBe('940 - Mastermade')
     expect(findSupplierFolder(['55390 - OUTRA'], 5539)).toBeNull()
     expect(joinFolder('1-UNITA\\SUP\\', '7 - X')).toBe('1-UNITA\\SUP\\7 - X')
+  })
+})
+
+describe('Base de fornecedores do UAU', () => {
+  const pj = (cod: number, cnpj: string, extra: Record<string, unknown> = {}) => ({
+    CodigoPessoa: cod,
+    NomePessoa: '  EMPRESA   X  ',
+    NomeFantasia: '',
+    TipoPessoa: 1,
+    CpfPessoa: cnpj,
+    AtivoInativo: 0,
+    EmailPessoa: 'Compras@X.com.br; outro@x.com',
+    SenhaLoginPessoa: 'nunca-lida',
+    ...extra,
+  })
+  it('lê só pessoa jurídica ativa e nunca a senha', () => {
+    const s = mapUauPerson(pj(10, '11.222.333/0001-81'))
+    expect(s).toEqual({ codPes: 10, document: '11222333000181', legalName: 'EMPRESA X', tradeName: null, email: 'compras@x.com.br' })
+    expect(mapUauPerson(pj(11, '52998224725', { TipoPessoa: 0 }))).toBe('pessoa_fisica')
+    expect(mapUauPerson(pj(12, '11222333000181', { AtivoInativo: 1 }))).toBe('inativa')
+    expect(mapUauPerson(pj(13, '123'))).toBe('invalida')
+  })
+  it('pega o primeiro e-mail válido', () => {
+    expect(firstValidEmail('sem email, a@b.com')).toBe('a@b.com')
+    expect(firstValidEmail(null)).toBeNull()
+  })
+  it('tira CNPJ repetido ficando com o código mais recente', () => {
+    const r = selectUauSuppliers([pj(5, '11222333000181'), pj(9, '11222333000181'), pj(7, '11222333000181'), pj(8, '52998224725', { TipoPessoa: 0 })])
+    expect(r.suppliers.map((s) => s.codPes)).toEqual([9])
+    expect(r.skipped).toMatchObject({ duplicada: 2, pessoa_fisica: 1 })
   })
 })

@@ -27,3 +27,7 @@ No UAU, **fornecedor é uma Pessoa** (física ou jurídica). Não há marcação
 1. Formato exato da resposta do `GravarPessoa` (o app procura `cod_pes`/`CodigoPessoa` em qualquer nível e, se não achar, reconsulta pelo CNPJ).
 2. Se o `AnexarArquivosBase64Request` cria a subpasta sozinho ou se ela precisa existir.
 3. `ChavePix/Pessoas/Cadastrar`: a documentação se contradiz nos códigos de tipo de chave e de "padrão" — por isso o Pix fica só no app por enquanto.
+
+## Importação da base de fornecedores
+
+O UAU não marca quem é fornecedor. O app (Fornecedores → Importar do UAU → Base inteira) lê `Pessoas/ConsultarPessoasPorCondicao` em faixas de 500 códigos (`cod_pes > N and cod_pes <= N+500`) até 4.000 códigos seguidos sem ninguém, e fica com as **pessoas jurídicas ativas** (TipoPessoa 1, CNPJ de 14 dígitos, AtivoInativo 0). CNPJ repetido no UAU: fica o maior código. Só nome, fantasia, CNPJ, e-mail e código são lidos (a resposta traz `SenhaLoginPessoa`). Regras em [`shared/domain/uau-suppliers.ts`](../shared/domain/uau-suppliers.ts); rota `POST /api/suppliers/uau-sync`, em etapas de ~8 s que o navegador encadeia. Em 11/2026: 8.751 pessoas, 5.653 CNPJs de empresas ativas, leitura completa em 30 s a 2,5 min.

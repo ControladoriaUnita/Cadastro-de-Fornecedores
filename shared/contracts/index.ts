@@ -416,6 +416,24 @@ export const importFromUauSchema = z.object({
   documents: z.array(documentNumberSchema).min(1).max(50),
 })
 
+/** Importação da base inteira do UAU, em etapas: o navegador chama de novo com `from` até `done`. */
+export const uauSyncSchema = z.object({
+  from: z.number().int().min(0).max(200_000),
+  emptyStreak: z.number().int().min(0).max(200_000).default(0),
+})
+
+export interface UauSyncDTO {
+  /** Próximo código de pessoa a ler */
+  from: number
+  emptyStreak: number
+  done: boolean
+  /** Contagens só desta etapa (o navegador soma) */
+  read: number
+  created: number
+  updated: number
+  skipped: { pessoa_fisica: number; inativa: number; invalida: number; duplicada: number }
+}
+
 export interface ImportResultDTO {
   results: { document: string; outcome: 'importado' | 'ja_existe' | 'nao_encontrado' | 'erro'; message: string; supplierId: string | null }[]
 }

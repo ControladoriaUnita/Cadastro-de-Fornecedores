@@ -14,8 +14,12 @@ import type {
   SupplierFullDTO,
   SupplierListItemDTO,
   supplierUpdateSchema,
+  UauSyncDTO,
+  uauSyncSchema,
 } from '../../../shared/contracts'
 import { personKindOf } from '../../../shared/domain/document-number'
+import { UAU_ROUTES } from '../../../shared/domain/uau-payload'
+import { selectUauSuppliers, UAU_SYNC_MAX_CODE, UAU_SYNC_RANGE, UAU_SYNC_STOP_AFTER_EMPTY } from '../../../shared/domain/uau-suppliers'
 import { documentChecklist, expiryState } from '../../../shared/domain/documents'
 import { weightedAverage } from '../../../shared/domain/evaluation'
 import { CLOSED_STATUSES, type RequestStatus } from '../../../shared/domain/request/status'
@@ -71,7 +75,22 @@ export async function listSuppliers(deps: UseCaseDeps): Promise<SupplierListItem
   requirePermission(deps.ctx.actor, PERMISSIONS.supplierRead)
   const today = deps.ctx.now()
   const rows = await deps.db
-    .select({ s: suppliers, modelName: supplierModels.name })
+    // Só as colunas da lista: a base importada do UAU tem milhares de linhas (sem ficha/Receita).
+    .select({
+      s: {
+        id: suppliers.id,
+        document: suppliers.document,
+        personKind: suppliers.personKind,
+        legalName: suppliers.legalName,
+        tradeName: suppliers.tradeName,
+        status: suppliers.status,
+        riskLevel: suppliers.riskLevel,
+        uauCodPes: suppliers.uauCodPes,
+        source: suppliers.source,
+        updatedAt: suppliers.updatedAt,
+      },
+      modelName: supplierModels.name,
+    })
     .from(suppliers)
     .leftJoin(supplierModels, eq(supplierModels.id, suppliers.modelId))
     .orderBy(suppliers.legalName)
@@ -307,6 +326,74 @@ export async function importFromUau(deps: UseCaseDeps, list: string[]): Promise<
     }
   }
   return { results }
+}
+
+/** Tempo de cada etapa da importação completa: curto para a barra andar, e longe do limite da Vercel. */
+const SYNC_STEP_MS = 8_000
+
+/**
+ * Importa a base inteira do UAU em etapas: lê faixas de cod_pes por até ~8 s e devolve
+ * de onde continuar. Fornecedor = pessoa jurídica ativa (ver shared/domain/uau-suppliers).
+ *  - CNPJ novo → entra como homologado, origem UAU.
+ *  - Já importado do UAU → atualiza nome, fantasia, e-mail e código (fica o código mais recente).
+ *  - Cadastrado pelo app → só preenche o código do UAU se estiver vazio; nada mais muda.
+ */
+export async function syncFromUau(deps: UseCaseDeps, input: z.infer<typeof uauSyncSchema>): Promise<UauSyncDTO> {
+  requirePermission(deps.ctx.actor, PERMISSIONS.supplierManage)
+  const started = Date.now()
+  const out: UauSyncDTO = { from: input.from, emptyStreak: input.emptyStreak, done: false, read: 0, created: 0, updated: 0, skipped: { pessoa_fisica: 0, inativa: 0, invalida: 0, duplicada: 0 } }
+
+  while (Date.now() - started < SYNC_STEP_MS) {
+    if (out.emptyStreak >= UAU_SYNC_STOP_AFTER_EMPTY || out.from >= UAU_SYNC_MAX_CODE) {
+      out.done = true
+      break
+    }
+    const to = out.from + UAU_SYNC_RANGE
+    const res = await deps.uau.call(UAU_ROUTES.findByCondition, { condicaoConsultarPessoa: `cod_pes > ${out.from} and cod_pes <= ${to}` })
+    if (!res.ok) throw new IntegrationError(`O UAU respondeu HTTP ${res.status} ao ler as pessoas ${out.from + 1}–${to}. Tente de novo: a importação continua de onde parou.`)
+    const rows = (Array.isArray(res.data) ? res.data : []).filter((r): r is Record<string, unknown> => !!r && typeof r === 'object')
+    out.read += rows.length
+    out.emptyStreak = rows.length ? 0 : out.emptyStreak + UAU_SYNC_RANGE
+
+    const batch = selectUauSuppliers(rows)
+    for (const k of Object.keys(batch.skipped) as (keyof UauSyncDTO['skipped'])[]) out.skipped[k] += batch.skipped[k]
+    if (batch.suppliers.length) {
+      const now = deps.ctx.now()
+      const fromUau = sql`${suppliers.source} = 'uau'`
+      const saved = await deps.db
+        .insert(suppliers)
+        .values(
+          batch.suppliers.map((s) => ({
+            document: s.document,
+            personKind: 'PJ',
+            legalName: s.legalName,
+            tradeName: s.tradeName,
+            email: s.email,
+            status: 'homologado',
+            uauCodPes: s.codPes,
+            uauSyncedAt: now,
+            source: 'uau',
+          })),
+        )
+        .onConflictDoUpdate({
+          target: suppliers.document,
+          set: {
+            legalName: sql`case when ${fromUau} then excluded.legal_name else ${suppliers.legalName} end`,
+            tradeName: sql`case when ${fromUau} then excluded.trade_name else ${suppliers.tradeName} end`,
+            email: sql`case when ${fromUau} then coalesce(excluded.email, ${suppliers.email}) else ${suppliers.email} end`,
+            uauCodPes: sql`case when ${fromUau} then excluded.uau_cod_pes else coalesce(${suppliers.uauCodPes}, excluded.uau_cod_pes) end`,
+            uauSyncedAt: now,
+            updatedAt: now,
+          },
+          // CNPJ repetido no UAU em lotes diferentes: fica o código mais recente
+          setWhere: sql`${suppliers.uauCodPes} is null or excluded.uau_cod_pes >= ${suppliers.uauCodPes}`,
+        })
+        .returning({ inserted: sql<boolean>`(xmax = 0)` })
+      for (const r of saved) r.inserted ? out.created++ : out.updated++
+    }
+    out.from = to
+  }
+  return out
 }
 
 // ----------------------------------------------------------------------------- avaliações
