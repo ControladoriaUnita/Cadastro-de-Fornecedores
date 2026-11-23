@@ -71,6 +71,10 @@ export const personSchema = z.object({
   rgNumber: z.string().trim().min(3, 'Informe o número do RG').max(20),
   rgIssuer: z.string().trim().min(2, 'Informe o órgão emissor').max(20),
   rgUf: z.enum(UFS, { errorMap: () => ({ message: 'UF do RG inválida' }) }),
+  /** Naturalidade (cidade de nascimento): o UAU exige, até 40 caracteres */
+  birthplace: z.string().trim().min(2, 'Informe a naturalidade (cidade de nascimento)').max(40, 'Use até 40 caracteres'),
+  /** UF de nascimento: sem ela o UAU falha ao validar o município (HTTP 500) */
+  birthUf: z.enum(UFS, { errorMap: () => ({ message: 'Informe a UF de nascimento' }) }),
 })
 export type PersonData = z.infer<typeof personSchema>
 

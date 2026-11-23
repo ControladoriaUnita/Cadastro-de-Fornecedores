@@ -162,6 +162,21 @@ function ProfileForm({ data, onSaved }: { data: PortalDataDTO; onSaved: (d: Port
                   ))}
                 </Select>
               </Field>
+              <div className="grid grid-cols-[1fr_96px] gap-2">
+                <Field label="Naturalidade" required hint="Cidade onde nasceu" error={err('person.birthplace')}>
+                  <Input value={person.birthplace ?? ''} maxLength={40} onChange={(e) => setPerson('birthplace', e.target.value)} placeholder="Goiânia" />
+                </Field>
+                <Field label="UF" required error={err('person.birthUf')}>
+                  <Select value={person.birthUf ?? ''} onChange={(e) => setPerson('birthUf', e.target.value)}>
+                    <option value="">UF</option>
+                    {UFS.map((u) => (
+                      <option key={u} value={u}>
+                        {u}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
               <Field label="RG (número)" required error={err('person.rgNumber')}>
                 <Input value={person.rgNumber ?? ''} onChange={(e) => setPerson('rgNumber', e.target.value)} />
               </Field>

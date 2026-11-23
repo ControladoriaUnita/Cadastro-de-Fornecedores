@@ -38,15 +38,17 @@ No módulo **Pessoas Físicas/PF** (Pessoas → Importar do UAU) a mesma leitura
 
 ## Pessoa física (módulo Pessoas Físicas/PF)
 
-Mesmo `Pessoas/GravarPessoa`, com `tipo_pes = 0`. A ficha do portal pede nascimento, sexo, estado civil e RG:
+Mesmo `Pessoas/GravarPessoa`, com `tipo_pes = 0`. A ficha do portal pede nascimento, naturalidade e UF de nascimento, sexo, estado civil e RG.
+Códigos conforme a documentação da própria API (`/uauAPI/swagger/ui/index`, modelo `UAUApi.Models.Pessoas.PesFis`) e **confirmados na gravação real de 23/11/2026** (pessoa de teste código 8773):
 
 | Ficha | UAU |
 |---|---|
 | Data de nascimento | `info_pes.dtnasc_pes` |
-| Sexo | `info_pesfis.sexo_pf` — **códigos a confirmar no teste real** (`UAU_SEX_CODES`: M=0, F=1) |
-| Estado civil | `info_pesfis.estciv_pf` — **códigos a confirmar** (`UAU_MARITAL_CODES`); união estável também marca `uniaoestavel_pf` |
-| RG (número) | `info_pesfis.doc_pf` com `tdoc_pf = "RG"` (o UAU guarda o PIS do mesmo jeito em funcionários) |
-| RG (órgão e UF) | guardados no app; ir para o UAU depende do código de `infopes_doc.tipo_doc` (a confirmar) |
+| Naturalidade (cidade) | `info_pesfis.naturalid_pf` — **obrigatória** (até 40 caracteres) |
+| UF de nascimento | `info_pesfis.ufnasc_pf` — **obrigatória na prática**: sem ela o UAU devolve HTTP 500 em `ValidarConsistenciaMunicipioPessoa` |
+| Sexo | `info_pesfis.sexo_pf`: 0 masculino, 1 feminino |
+| Estado civil | `info_pesfis.estciv_pf`: 0 separado, 1 solteiro, 2 casado, 3 desquitado, 4 viúvo, 5 divorciado, 6 outros. União estável = solteiro + `uniaoestavel_pf` |
+| RG (número) | `info_pesfis.doc_pf` com `tdoc_pf = "RG"` |
+| RG (órgão e UF) | guardados no app (não há campo próprio no bloco PesFis) |
 
-As listas de códigos de sexo e estado civil não estão na documentação da API: depois da primeira gravação real de PF,
-abrir a pessoa na tela do UAU, conferir e ajustar `shared/domain/uau-payload.ts` se preciso.
+O UAU às vezes recusa com **HTTP 200** e `{"Sucesso": false, "Mensagem": "..."}`; o app trata isso como recusa (`uauRefusal`) e mostra a mensagem.

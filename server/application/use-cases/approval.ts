@@ -21,6 +21,7 @@ import {
   buildPhoneBody,
   buildSavePersonBody,
   extractPersonCode,
+  uauRefusal,
   findSupplierFolder,
   joinFolder,
   supplierFolderName,
@@ -139,6 +140,19 @@ export async function approveRequest(deps: UseCaseDeps, requestId: string) {
     const res = await deps.uau.call(UAU_ROUTES.savePerson, buildSavePersonBody(profile, { user, now, foundedAt: await foundedAt(deps, detail.supplier) }))
     calls.push({ ...res, description: 'GravarPessoa' })
     if (!res.simulated) {
+      const refusal = uauRefusal(res.data)
+      if (refusal) {
+        // HTTP 200 com Sucesso: false — nada foi criado no UAU
+        await recordEvent(deps.db, {
+          requestId,
+          actorId: deps.ctx.actor.id,
+          actorLabel: deps.ctx.actor.fullName,
+          kind: 'uau_error',
+          comment: `GravarPessoa recusado: ${refusal}`,
+          payload: { response: res.data as Record<string, unknown> },
+        })
+        throw new AppError('UAU_SAVE_FAILED', `O UAU recusou o cadastro: ${refusal}`, 502, res.data)
+      }
       if (!res.ok) {
         await recordEvent(deps.db, {
           requestId,

@@ -7,7 +7,7 @@ import { availableActions, transition, WorkflowError } from './request/workflow'
 import { defaultRuleConfigs, evaluateRisk, type RiskFacts } from './risk'
 import { DEFAULT_ROLES, permissionsFor, PERMISSIONS, roleKeyFromName } from './roles'
 import { supplierProfileSchema } from './supplier'
-import { addressNumber, buildAttachBody, buildBankBody, buildSavePersonBody, extractPersonCode, findSupplierFolder, joinFolder, supplierFolderName } from './uau-payload'
+import { addressNumber, buildAttachBody, buildBankBody, buildSavePersonBody, extractPersonCode, findSupplierFolder, joinFolder, supplierFolderName, UAU_MARITAL_CODES, UAU_SEX_CODES, uauRefusal } from './uau-payload'
 import { firstValidEmail, mapUauPerson, selectUauSuppliers } from './uau-suppliers'
 
 describe('CNPJ/CPF', () => {
@@ -274,5 +274,21 @@ describe('Escala de notas 1 a 10', () => {
     expect(evaluationSchema.safeParse({ ...base, scores: { [c]: 10 } }).success).toBe(true)
     expect(evaluationSchema.safeParse({ ...base, scores: { [c]: 11 } }).success).toBe(false)
     expect(evaluationSchema.safeParse({ ...base, scores: { [c]: 0 } }).success).toBe(false)
+  })
+})
+
+describe('Recusa do UAU com HTTP 200', () => {
+  it('lê Sucesso: false e a mensagem; resposta normal não é recusa', () => {
+    const data = { CodigoPessoa: 0, Sucesso: false, Mensagem: 'O campo Naturalidade deve ser preenchido.\r\nO limite Do campo Naturalidade é de 40 caracteres.', QuantidadeMensagens: 2 }
+    expect(uauRefusal(data)).toBe('O campo Naturalidade deve ser preenchido. O limite Do campo Naturalidade é de 40 caracteres.')
+    expect(uauRefusal([{ cod_pes: 123 }])).toBeNull()
+    expect(uauRefusal('')).toBeNull()
+  })
+})
+
+describe('Códigos de pessoa física do UAU (swagger PesFis)', () => {
+  it('sexo e estado civil seguem a documentação da API', () => {
+    expect(UAU_SEX_CODES).toEqual({ M: 0, F: 1 })
+    expect(UAU_MARITAL_CODES).toEqual({ separado: 0, solteiro: 1, casado: 2, viuvo: 4, divorciado: 5, uniao_estavel: 1 })
   })
 })

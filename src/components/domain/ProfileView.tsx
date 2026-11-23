@@ -42,6 +42,7 @@ export function ProfileView({ profile }: { profile: P }) {
             <Item label="Data de nascimento" value={s(person.birthDate).replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1')} />
             <Item label="Sexo" value={SEXES[person.sex as keyof typeof SEXES] ?? ''} />
             <Item label="Estado civil" value={MARITAL_STATUSES[person.maritalStatus as keyof typeof MARITAL_STATUSES] ?? ''} />
+            <Item label="Naturalidade" value={person.birthplace ? `${s(person.birthplace)}${person.birthUf ? `/${s(person.birthUf)}` : ''}` : ''} />
             <Item label="RG" value={person.rgNumber ? `${s(person.rgNumber)} · ${s(person.rgIssuer)}/${s(person.rgUf)}` : ''} />
           </dl>
         </section>

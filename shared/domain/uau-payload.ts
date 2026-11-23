@@ -63,11 +63,14 @@ function foundationDate(v: string | null | undefined): string | undefined {
 }
 
 /**
- * Códigos do UAU para pessoa física. A API não documenta as listas: CONFIRMAR NO TESTE REAL
- * (abrir a pessoa gravada na tela do UAU e conferir sexo e estado civil) e ajustar aqui se preciso.
+ * Códigos do UAU para pessoa física, conforme a documentação da própria API (swagger do UAU,
+ * modelo UAUApi.Models.Pessoas.PesFis):
+ *   sexo_pf:   0 masculino · 1 feminino
+ *   estciv_pf: 0 separado · 1 solteiro · 2 casado · 3 desquitado · 4 viúvo · 5 divorciado · 6 outros
+ * União estável vai como solteiro + uniaoestavel_pf = true.
  */
 export const UAU_SEX_CODES: Record<Sex, number> = { M: 0, F: 1 }
-export const UAU_MARITAL_CODES: Record<MaritalStatus, number> = { solteiro: 1, casado: 2, separado: 3, divorciado: 4, viuvo: 5, uniao_estavel: 1 }
+export const UAU_MARITAL_CODES: Record<MaritalStatus, number> = { solteiro: 1, casado: 2, separado: 0, divorciado: 5, viuvo: 4, uniao_estavel: 1 }
 
 /** Bloco de pessoa física: com os dados informados no CPF; para CNPJ fica como já validado no UAU. */
 function pesFis(p: SupplierProfile) {
@@ -80,6 +83,10 @@ function pesFis(p: SupplierProfile) {
     uniaoestavel_pf: x.maritalStatus === 'uniao_estavel',
     doc_pf: x.rgNumber.slice(0, 20),
     tdoc_pf: 'RG',
+    // Naturalidade: obrigatória no UAU ("O campo Naturalidade deve ser preenchido"), até 40 caracteres
+    naturalid_pf: x.birthplace.slice(0, 40),
+    // UF de nascimento: sem ela o UAU quebra ao validar o município (ValidarConsistenciaMunicipioPessoa)
+    ufnasc_pf: x.birthUf,
     indicativofiscal_pf: 0,
   }
 }
@@ -204,6 +211,16 @@ export function findSupplierFolder(existing: string[], codPes: number): string |
 export const joinFolder = (base: string, folder: string) => `${base.replace(/[\\/]+$/, '')}\\${folder}`
 
 /** Lê o código da pessoa devolvido pelo GravarPessoa (o formato varia entre versões do UAU). */
+/**
+ * O UAU às vezes responde HTTP 200 com `Sucesso: false` e o motivo em `Mensagem`
+ * (ex.: "O campo Naturalidade deve ser preenchido."). Devolve o motivo, ou null se não é recusa.
+ */
+export function uauRefusal(data: unknown): string | null {
+  const o = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null | undefined
+  if (!o || typeof o !== 'object' || o.Sucesso !== false) return null
+  return String(o.Mensagem ?? 'O UAU recusou sem informar o motivo.').replace(/\s+/g, ' ').trim()
+}
+
 export function extractPersonCode(data: unknown): number | null {
   const seen = new Set<unknown>()
   const walk = (v: unknown): number | null => {

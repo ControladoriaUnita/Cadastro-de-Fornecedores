@@ -551,7 +551,7 @@ describe('fluxo de cadastro (banco em memória)', () => {
       await portal.portalUpload(supplierPortal(), invite.id, { file: pdf('rg.pdf'), documentTypeId: pfType.id, issuedAt: null, expiresAt: null })
       await portal.saveProfile(supplierPortal(), invite.id, profile)
       await expect(portal.portalSubmit(supplierPortal(), invite.id)).rejects.toBeTruthy() // falta nascimento, sexo, estado civil e RG
-      await portal.saveProfile(supplierPortal(), invite.id, { ...profile, person: { birthDate: '1990-04-12', sex: 'F', maritalStatus: 'casado', rgNumber: '1234567', rgIssuer: 'SSP', rgUf: 'GO' } })
+      await portal.saveProfile(supplierPortal(), invite.id, { ...profile, person: { birthDate: '1990-04-12', sex: 'F', maritalStatus: 'casado', rgNumber: '1234567', rgIssuer: 'SSP', rgUf: 'GO', birthplace: 'Goiânia', birthUf: 'GO' } })
       mails.length = 0
       await portal.portalSubmit(supplierPortal(), invite.id)
       expect(mails.some((m) => m.to.includes('gestor.pf@t.com'))).toBe(true)
@@ -567,7 +567,7 @@ describe('fluxo de cadastro (banco em memória)', () => {
       await approval.approveRequest(asPf, r.id)
       const save = uauCalls.find((c) => c.route.endsWith('GravarPessoa'))?.body
       expect(save.info_pes).toMatchObject({ tipo_pes: 0, cpf_pes: CPF, dtnasc_pes: '1990-04-12T00:00:00' })
-      expect(save.info_pesfis).toMatchObject({ sexo_pf: 1, estciv_pf: 2, doc_pf: '1234567', tdoc_pf: 'RG' })
+      expect(save.info_pesfis).toMatchObject({ sexo_pf: 1, estciv_pf: 2, doc_pf: '1234567', tdoc_pf: 'RG', naturalid_pf: 'Goiânia', ufnasc_pf: 'GO' })
       const attach = uauCalls.find((c) => c.route.endsWith('AnexarArquivosBase64Request'))?.body
       expect(attach.lista_arquivos.map((x: any) => x.NomeArquivo)).toEqual(['rg'])
       expect((await requests.getRequest(asPf, r.id)).status).toBe('gravado_uau')
