@@ -32,6 +32,8 @@ const pdf = (name: string) => new File([Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj
 const mails: { to: string[]; subject: string }[] = []
 const uauCalls: { route: string; body: any }[] = []
 const files = new Map<string, Buffer>()
+/** Simula o UAU recusando os anexos (como na primeira gravação real, sem empresa). */
+let failAttach = false
 
 const mailer = {
   provider: 'graph' as const,
@@ -61,6 +63,7 @@ const uau = {
       return { route, status: 400, ok: false, ms: 1, data: [{ Descricao: 'Não foi encontrado nenhuma pessoa com os dados informados.' }] }
     if (route.endsWith('GravarPessoa')) return { route, status: 200, ok: true, ms: 1, data: [{ cod_pes: 9999 }] }
     if (route.endsWith('ListarDiretorios')) return { route, status: 200, ok: true, ms: 1, data: [] }
+    if (route.endsWith('AnexarArquivosBase64Request') && failAttach) return { route, status: 400, ok: false, ms: 1, data: { Descricao: 'Não foi possível gravar o arquivo.' } }
     return { route, status: 200, ok: true, ms: 1, data: '' }
   },
 }
@@ -258,5 +261,56 @@ describe('fluxo de cadastro (banco em memória)', () => {
     mails.length = 0
     await requests.cancelRequest(asObra, r.id, null)
     expect(mails.some((m) => m.to.includes('obra@t.com'))).toBe(false)
+  })
+
+  it('anexo recusado na aprovação é reenviado pelo botão', async () => {
+    const asObra = await staff(users.obra)
+    const asAnalyst = await staff(users.analista)
+    const asApprover = await staff(users.aprovador)
+    const CNPJ4 = '04252011000110'
+    const r = await requests.createRequest(asObra, { document: CNPJ4, modelId: null, contactEmail: 'e@t.com', urgency: 'normal', sendInvite: false } as any)
+    await requests.inviteSupplier(asAnalyst, r.id, { modelId: model.id })
+    const [invite] = (await db.select().from(schema.invites).where(eq(schema.invites.requestId, r.id))).filter((i: any) => !i.revokedAt)
+    await portal.saveProfile(supplierPortal(), invite.id, {
+      document: CNPJ4, legalName: 'OUTRA EMPRESA LTDA', tradeName: null, email: 'e@t.com', phoneDdd: '62', phoneNumber: '32000001',
+      website: null, contactName: null, stateRegistration: null, municipalRegistration: null, mainCnae: null, simplesNacional: null,
+      address: { cep: '74003010', street: 'Rua 1', number: '10', complement: null, district: 'Centro', city: 'Goiânia', uf: 'GO' },
+      bank: null, pix: null,
+    })
+    await portal.portalUpload(supplierPortal(), invite.id, { file: pdf('cnpj.pdf'), documentTypeId: tCnpj.id, issuedAt: null, expiresAt: null })
+    await portal.portalUpload(supplierPortal(), invite.id, { file: pdf('cnd.pdf'), documentTypeId: tCnd.id, issuedAt: null, expiresAt: isoIn(365) })
+    await portal.portalSubmit(supplierPortal(), invite.id)
+    const d = await requests.getRequest(asAnalyst, r.id)
+    for (const doc of d.documents) {
+      await requests.reviewDocument(asAnalyst, r.id, doc.id, { status: 'aprovado', note: null, issuedAt: null, expiresAt: doc.documentTypeId === tCnd.id ? isoIn(365) : null })
+    }
+    await suppliersUC.runRiskCheck(asAnalyst, d.supplier.id, r.id)
+    await requests.sendToApproval(asAnalyst, r.id)
+
+    // aprovação: pessoa criada, mas o UAU recusa os anexos → gravado com aviso
+    failAttach = true
+    await approval.approveRequest(asApprover, r.id)
+    const afterApprove = await requests.getRequest(asApprover, r.id)
+    expect(afterApprove.status).toBe('gravado_uau')
+    expect(afterApprove.documents.filter((x) => !x.uauAttachedAt)).toHaveLength(2)
+
+    // quem não aprova não pode reenviar
+    await expect(approval.resendAttachments(asAnalyst, r.id)).rejects.toMatchObject({ status: 403 })
+    // UAU ainda recusando: erro claro e nada marcado como anexado
+    await expect(approval.resendAttachments(asApprover, r.id)).rejects.toMatchObject({ code: 'UAU_ATTACH_FAILED' })
+    expect((await requests.getRequest(asApprover, r.id)).documents.filter((x) => !x.uauAttachedAt)).toHaveLength(2)
+
+    // UAU volta a aceitar: o botão manda os 2 pendentes, na pessoa certa
+    failAttach = false
+    uauCalls.length = 0
+    const resent = await approval.resendAttachments(asApprover, r.id)
+    expect(resent.documents.every((x) => !!x.uauAttachedAt)).toBe(true)
+    const body = uauCalls.find((c) => c.route.endsWith('AnexarArquivosBase64Request'))?.body
+    expect(body.lista_arquivos).toHaveLength(2)
+    expect(body.lista_arquivos[0].Identificador).toBe('Pessoas 9999')
+    expect(resent.events.some((e) => e.kind === 'uau_attach')).toBe(true)
+
+    // sem pendentes: não reenvia de novo
+    await expect(approval.resendAttachments(asApprover, r.id)).rejects.toMatchObject({ code: 'NOTHING_PENDING' })
   })
 })

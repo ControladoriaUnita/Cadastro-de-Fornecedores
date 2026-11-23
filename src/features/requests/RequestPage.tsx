@@ -12,6 +12,7 @@ import { CompanyCard } from '@/components/domain/CompanyCard'
 import { DocumentList, type UploadValues } from '@/components/domain/DocumentList'
 import { ProfileView } from '@/components/domain/ProfileView'
 import { RequestStatusBadge, RiskBadge } from '@/components/domain/badges'
+import { ResendAttachments } from '@/components/domain/ResendAttachments'
 import { RiskPanel } from '@/components/domain/RiskPanel'
 import { Timeline } from '@/components/domain/Timeline'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -226,6 +227,9 @@ export default function RequestPage() {
         }
       />
 
+      <div className="mb-6 empty:hidden">
+        <ResendAttachments detail={d} onDone={set} />
+      </div>
       <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
         <Card>
           <div className="px-4 pt-2">

@@ -167,30 +167,9 @@ export async function approveRequest(deps: UseCaseDeps, requestId: string) {
   }
 
   // 3) anexos
-  const docs = await approvedDocuments(deps, detail.supplier.id)
-  const toAttach = docs.filter((d) => !d.uauAttachedAt)
-  if (toAttach.length) {
-    try {
-      const files = await Promise.all(
-        toAttach.map(async (d) => ({ fileName: d.fileName, extension: EXT[d.mime] ?? 'pdf', base64: (await deps.storage.get(d.storageKey)).toString('base64') })),
-      )
-      const r = await deps.uau.call(
-        UAU_ROUTES.attachFiles,
-        buildAttachBody(files, {
-          codPes: codPes ?? 0,
-          folder: codPes ? await resolveAttachmentFolder(deps, codPes, folderName(detail.supplier)) : joinFolder(uauAttachmentFolder(), '<simulação>'),
-          user,
-          company: uauCompany(),
-        }),
-      )
-      calls.push({ ...r, data: r.simulated ? undefined : r.data, description: `Anexos (${toAttach.length})` })
-      if (r.ok && !r.simulated) {
-        await deps.db.update(documents).set({ uauAttachedAt: now }).where(inArray(documents.id, toAttach.map((d) => d.id)))
-      } else if (!r.simulated) warnings.push(`Anexos: HTTP ${r.status}${uauMessage(r.data)}`)
-    } catch (err) {
-      warnings.push(`Anexos: ${err instanceof Error ? err.message : 'falhou'}`)
-    }
-  }
+  const attach = await attachPendingDocuments(deps, detail.supplier, codPes, user, now)
+  if (attach.call) calls.push(attach.call)
+  if (attach.warning) warnings.push(attach.warning)
 
   // 4) situação
   const result = {
@@ -244,4 +223,66 @@ async function foundedAt(deps: UseCaseDeps, s: { document: string; personKind: s
   if (s.receita?.dataAbertura) return s.receita.dataAbertura
   const company = await deps.company.find(s.document).catch(() => null)
   return company?.dataAbertura ?? null
+}
+
+/**
+ * Anexa no UAU os documentos aprovados que ainda não foram (uau_attached_at vazio).
+ * Usado na aprovação e no botão "Reenviar anexos ao UAU". Nunca lança: falha vira aviso.
+ */
+async function attachPendingDocuments(
+  deps: UseCaseDeps,
+  supplier: { id: string; tradeName: string | null; legalName: string },
+  codPes: number | null,
+  user: string,
+  now: Date,
+): Promise<{ count: number; ok: boolean; call?: Omit<UauCallResult, 'data'> & { data?: unknown; description: string }; warning?: string }> {
+  const toAttach = (await approvedDocuments(deps, supplier.id)).filter((d) => !d.uauAttachedAt)
+  if (!toAttach.length) return { count: 0, ok: true }
+  try {
+    const files = await Promise.all(
+      toAttach.map(async (d) => ({ fileName: d.fileName, extension: EXT[d.mime] ?? 'pdf', base64: (await deps.storage.get(d.storageKey)).toString('base64') })),
+    )
+    const r = await deps.uau.call(
+      UAU_ROUTES.attachFiles,
+      buildAttachBody(files, {
+        codPes: codPes ?? 0,
+        folder: codPes ? await resolveAttachmentFolder(deps, codPes, folderName(supplier)) : joinFolder(uauAttachmentFolder(), '<simulação>'),
+        user,
+        company: uauCompany(),
+      }),
+    )
+    const call = { ...r, data: r.simulated ? undefined : r.data, description: `Anexos (${toAttach.length})` }
+    if (r.ok && !r.simulated) {
+      await deps.db.update(documents).set({ uauAttachedAt: now }).where(inArray(documents.id, toAttach.map((d) => d.id)))
+      return { count: toAttach.length, ok: true, call }
+    }
+    return { count: toAttach.length, ok: !!r.simulated, call, warning: r.simulated ? undefined : `Anexos: HTTP ${r.status}${uauMessage(r.data)}` }
+  } catch (err) {
+    return { count: toAttach.length, ok: false, warning: `Anexos: ${err instanceof Error ? err.message : 'falhou'}` }
+  }
+}
+
+/**
+ * Botão "Reenviar anexos ao UAU": para solicitação já gravada no UAU de verdade, manda os
+ * documentos aprovados que ainda não foram anexados (por falha na gravação ou aprovados depois).
+ */
+export async function resendAttachments(deps: UseCaseDeps, requestId: string) {
+  requirePermission(deps.ctx.actor, PERMISSIONS.requestApprove)
+  const detail = await getRequest(deps, requestId)
+  if (detail.status !== 'gravado_uau' || detail.uauSimulated) throw new AppError('NOT_IN_UAU', 'Só dá para reenviar anexos de solicitação já gravada no UAU.', 409)
+  const codPes = detail.supplier.uauCodPes
+  if (!codPes) throw new AppError('NO_UAU_CODE', 'O fornecedor está sem o código da pessoa no UAU.', 409)
+  if (!deps.uau.writeEnabled) throw new AppError('UAU_SIMULATION', 'A gravação no UAU está em simulação (UAU_GRAVACAO=simulacao).', 409)
+
+  const res = await attachPendingDocuments(deps, detail.supplier, codPes, uauUser(), deps.ctx.now())
+  if (!res.count) throw new AppError('NOTHING_PENDING', 'Todos os documentos aprovados já estão anexados no UAU.', 409)
+  await recordEvent(deps.db, {
+    requestId,
+    actorId: deps.ctx.actor.id,
+    actorLabel: deps.ctx.actor.fullName,
+    kind: res.ok ? 'uau_attach' : 'uau_error',
+    comment: res.ok ? `${res.count} anexo(s) enviados ao UAU (pessoa ${codPes}).` : res.warning,
+  })
+  if (!res.ok) throw new AppError('UAU_ATTACH_FAILED', `O UAU recusou os anexos. ${res.warning ?? ''}`.trim(), 502)
+  return getRequest(deps, requestId)
 }

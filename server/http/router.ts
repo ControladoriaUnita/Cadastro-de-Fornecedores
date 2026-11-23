@@ -237,6 +237,7 @@ staff('POST', '/requests/:id/send-to-approval', async (deps, c) => requests.send
 staff('POST', '/requests/:id/return', async (deps, c) => requests.returnToAnalysis(deps, id(c), parse(commentSchema, await c.json()).comment))
 staff('GET', '/requests/:id/uau-preview', async (deps, c) => approval.uauPreview(deps, id(c)))
 staff('POST', '/requests/:id/approve', async (deps, c) => approval.approveRequest(deps, id(c)))
+staff('POST', '/requests/:id/uau-attachments', async (deps, c) => approval.resendAttachments(deps, id(c)))
 staff('POST', '/requests/:id/documents', async (deps, c) => requests.staffUpload(deps, id(c), await uploadForm(c)))
 staff('POST', '/requests/:id/documents/:docId/review', async (deps, c) =>
   requests.reviewDocument(deps, id(c), id(c, 'docId'), parse(reviewDocumentSchema, await c.json())))

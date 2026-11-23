@@ -19,6 +19,7 @@ const KIND_LABELS: Record<string, string> = {
   document_approved: 'Aprovou documento',
   document_rejected: 'Reprovou documento',
   uau_error: 'Erro ao gravar no UAU',
+  uau_attach: 'Anexos reenviados ao UAU',
 }
 
 export function Timeline({ events }: { events: EventDTO[] }) {

@@ -7,6 +7,7 @@ import { PERMISSIONS } from '@shared/domain/roles'
 import { PATHS } from '@/app/navigation'
 import { ProfileView } from '@/components/domain/ProfileView'
 import { RequestStatusBadge } from '@/components/domain/badges'
+import { ResendAttachments } from '@/components/domain/ResendAttachments'
 import { RiskPanel } from '@/components/domain/RiskPanel'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Alert, Badge, Button, Card, CardBody, CardHeader, ConfirmDialog, Field, Skeleton, Textarea } from '@/components/ui'
@@ -52,7 +53,7 @@ export default function ValidationPage() {
         backTo={PATHS.validation}
         title={d.supplier.legalName}
         meta={<RequestStatusBadge status={d.status} />}
-        description={`nº ${d.number} · ${formatDocument(d.supplier.document)} · ${d.model?.name ?? "—"}`}
+        description={`nº ${d.number} · ${formatDocument(d.supplier.document)} · ${d.model?.name ?? '—'}`}
         actions={
           <>
             <Link to={PATHS.request(d.id)}>
@@ -85,6 +86,7 @@ export default function ValidationPage() {
               {d.uauSimulated ? 'Aprovado em simulação.' : `Gravado no UAU — código da pessoa ${String(d.uauResult?.codPes ?? '—')}.`}
             </Alert>
           )}
+          <ResendAttachments detail={d} onDone={done} />
           {p.blockers.length > 0 && d.status === 'aguardando_aprovacao' && (
             <Alert tone="error" title="Pendências antes de aprovar">
               <ul className="list-disc pl-4">
