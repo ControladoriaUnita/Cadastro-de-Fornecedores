@@ -1,8 +1,9 @@
 /**
  * Painel de resumo: indicadores de fornecedores, solicitações, risco, vencimentos e avaliações.
  */
-import { and, desc, eq, isNull, sql } from 'drizzle-orm'
-import type { DashboardDTO } from '../../../shared/contracts'
+import { and, eq, isNull, sql } from 'drizzle-orm'
+import type { DashboardDTO, RatedSupplierDTO } from '../../../shared/contracts'
+import { monthKey, supplierScores } from '../../../shared/domain/evaluation'
 import { expiryState } from '../../../shared/domain/documents'
 import { CLOSED_STATUSES, REQUEST_STATUSES, type RequestStatus } from '../../../shared/domain/request/status'
 import type { RiskLevel } from '../../../shared/domain/risk'
@@ -12,14 +13,14 @@ import { requirePermission } from '../context'
 import { notFromDroppedRequest } from '../shared'
 import type { UseCaseDeps } from '../ports'
 
-const { documentTypes, documents, evaluations, requestEvents, requests, suppliers } = schema
+const { documentTypes, documents, evaluations, requests, suppliers } = schema
 
 export async function getDashboard(deps: UseCaseDeps): Promise<DashboardDTO> {
   requirePermission(deps.ctx.actor, PERMISSIONS.supplierRead)
   const now = deps.ctx.now()
   const since30 = new Date(now.getTime() - 30 * 86_400_000)
 
-  const [sup, reqRows, docRows, evalRows, activity] = await Promise.all([
+  const [sup, reqRows, docRows, evalRows] = await Promise.all([
     deps.db.select({ id: suppliers.id, status: suppliers.status, risk: suppliers.riskLevel, name: suppliers.legalName, trade: suppliers.tradeName }).from(suppliers),
     deps.db.select({ status: requests.status, createdAt: requests.createdAt, closedAt: requests.closedAt }).from(requests),
     deps.db
@@ -28,17 +29,7 @@ export async function getDashboard(deps: UseCaseDeps): Promise<DashboardDTO> {
       .innerJoin(documentTypes, eq(documentTypes.id, documents.documentTypeId))
       .leftJoin(requests, eq(requests.id, documents.requestId))
       .where(and(isNull(documents.replacedAt), sql`${documents.expiresAt} is not null`, notFromDroppedRequest)),
-    deps.db
-      .select({ supplierId: evaluations.supplierId, avg: sql<string>`avg(${evaluations.average})`, n: sql<number>`count(*)::int` })
-      .from(evaluations)
-      .groupBy(evaluations.supplierId),
-    deps.db
-      .select({ e: requestEvents, number: requests.number, supplierName: suppliers.legalName })
-      .from(requestEvents)
-      .innerJoin(requests, eq(requests.id, requestEvents.requestId))
-      .innerJoin(suppliers, eq(suppliers.id, requests.supplierId))
-      .orderBy(desc(requestEvents.at))
-      .limit(12),
+    deps.db.select({ supplierId: evaluations.supplierId, average: evaluations.average, createdAt: evaluations.createdAt }).from(evaluations),
   ])
 
   const nameOf = new Map(sup.map((s) => [s.id, s.trade || s.name]))
@@ -59,7 +50,15 @@ export async function getDashboard(deps: UseCaseDeps): Promise<DashboardDTO> {
     .slice(0, 15)
     .map((d) => ({ supplierId: d.supplierId, supplierName: nameOf.get(d.supplierId) ?? '', documentTypeName: d.typeName, expiresAt: d.expiresAt!, expiry: d.expiry }))
 
-  const rated = evalRows.map((e) => ({ supplierId: e.supplierId, supplierName: nameOf.get(e.supplierId) ?? '', average: Math.round(Number(e.avg) * 100) / 100, evaluations: e.n }))
+  // Média geral e média do mês corrente de cada fornecedor avaliado
+  const evalsBy = new Map<string, { average: number | null; createdAt: Date }[]>()
+  for (const e of evalRows) evalsBy.set(e.supplierId, [...(evalsBy.get(e.supplierId) ?? []), e])
+  const rated: RatedSupplierDTO[] = []
+  for (const [supplierId, list] of evalsBy) {
+    const s = supplierScores(list, now, 1)
+    if (s.overall === null) continue
+    rated.push({ supplierId, supplierName: nameOf.get(supplierId) ?? '', overall: s.overall, overallCount: s.overallCount, month: s.month, monthCount: s.monthCount })
+  }
 
   return {
     suppliers: { total: sup.length, homologado: countStatus('homologado'), em_cadastro: countStatus('em_cadastro'), bloqueado: countStatus('bloqueado'), inativo: countStatus('inativo') },
@@ -73,16 +72,8 @@ export async function getDashboard(deps: UseCaseDeps): Promise<DashboardDTO> {
     risk,
     documents: { expiring: docs.filter((d) => d.expiry === 'vencendo').length, expired: docs.filter((d) => d.expiry === 'vencido').length },
     expiringList,
-    topRated: [...rated].sort((a, b) => b.average - a.average).slice(0, 5),
-    lowRated: [...rated].filter((r) => r.average < 3.5).sort((a, b) => a.average - b.average).slice(0, 5),
-    recentActivity: activity.map(({ e, number, supplierName }) => ({
-      requestId: e.requestId,
-      number,
-      supplierName,
-      at: e.at.toISOString(),
-      actorLabel: e.actorLabel,
-      kind: e.kind,
-      toStatus: e.toStatus as RequestStatus | null,
-    })),
+    ratingMonth: monthKey(now),
+    topRated: [...rated].sort((a, b) => b.overall - a.overall || b.overallCount - a.overallCount).slice(0, 5),
+    worstRated: [...rated].sort((a, b) => a.overall - b.overall || b.overallCount - a.overallCount).slice(0, 5),
   }
 }

@@ -155,7 +155,7 @@ beforeAll(async () => {
 describe('fluxo de cadastro (banco em memória)', () => {
   it('Obra faz o pré-cadastro sem modelo e Suprimentos é avisado', async () => {
     const asObra = await staff(users.obra)
-    expect(asObra.ctx.actor.permissions).toEqual(['request.create', 'request.read.own'])
+    expect(asObra.ctx.actor.permissions).toEqual(['request.create', 'request.read.own', 'evaluation.create'])
     mails.length = 0
     const r = await requests.createRequest(asObra, { document: CNPJ, modelId: null, contactEmail: 'forn@t.com', urgency: 'normal', sendInvite: false } as any)
     requestId = r.id
@@ -341,5 +341,62 @@ describe('fluxo de cadastro (banco em memória)', () => {
 
     // sem pendentes: não reenvia de novo
     await expect(approval.resendAttachments(asApprover, r.id)).rejects.toMatchObject({ code: 'NOTHING_PENDING' })
+  })
+
+  it('médias de avaliação: geral e do mês no Painel, na lista e na ficha', async () => {
+    const asAnalyst = await staff(users.analista)
+    const [crit] = await db.insert(schema.evaluationCriteria).values({ name: 'Prazo', weight: 1 }).returning()
+    const all = await suppliersUC.listSuppliers(asAnalyst)
+    const [a, b] = [all.find((x) => x.document === CNPJ)!, all.find((x) => x.document === CNPJ2)!]
+    const now = new Date()
+    const lastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15, 12))
+    const ev = (supplierId: string, average: number, createdAt: Date) => ({ supplierId, evaluatorId: users.analista.id, workName: 'Obra', scores: { [crit.id]: average }, average, createdAt })
+    await db.insert(schema.evaluations).values([
+      ev(a.id, 5, now), // A: geral 4 (5 e 3); mês 5
+      ev(a.id, 3, lastMonth),
+      ev(b.id, 2, lastMonth), // B: geral 1,5 (2 e 1); sem avaliação no mês
+      ev(b.id, 1, lastMonth),
+    ])
+
+    const dash = await dashboard.getDashboard(asAnalyst)
+    expect(dash.worstRated[0]).toMatchObject({ supplierId: b.id, overall: 1.5, overallCount: 2, month: null, monthCount: 0 })
+    expect(dash.topRated[0]).toMatchObject({ supplierId: a.id, overall: 4, overallCount: 2, month: 5, monthCount: 1 })
+
+    const list = await suppliersUC.listSuppliers(asAnalyst)
+    expect(list.find((x) => x.id === a.id)).toMatchObject({ average: 4, evaluations: 2, monthAverage: 5, monthEvaluations: 1 })
+    expect(list.find((x) => x.id === b.id)).toMatchObject({ average: 1.5, evaluations: 2, monthAverage: null, monthEvaluations: 0 })
+
+    const full = await suppliersUC.getSupplier(asAnalyst, a.id)
+    expect([full.average, full.scores.overall, full.scores.month]).toEqual([4, 4, 5])
+    expect(full.scores.monthly[1]).toMatchObject({ average: 3, count: 1 })
+  })
+
+  it('Obra avalia fornecedor homologado pela tela "Avaliar"', async () => {
+    const asObra = await staff(users.obra)
+    // busca: só homologados, por nome ou CNPJ; curinga digitado vale como texto
+    expect(await suppliersUC.searchEvaluableSuppliers(asObra, 'a')).toEqual([])
+    const byName = await suppliersUC.searchEvaluableSuppliers(asObra, 'empresa teste')
+    expect(byName.map((x) => x.document)).toEqual([CNPJ])
+    expect(Object.keys(byName[0]!).sort()).toEqual(['document', 'id', 'legalName', 'tradeName'])
+    expect((await suppliersUC.searchEvaluableSuppliers(asObra, '112223')).map((x) => x.document)).toEqual([CNPJ])
+    expect(await suppliersUC.searchEvaluableSuppliers(asObra, '%%')).toEqual([])
+    // CNPJ2 teve a solicitação cancelada: não está homologado e não aparece
+    expect(await suppliersUC.searchEvaluableSuppliers(asObra, '114447')).toEqual([])
+
+    const homologated = byName[0]!
+    const criteria = (await db.select().from(schema.evaluationCriteria)) as { id: string }[]
+    const scores = Object.fromEntries(criteria.map((c) => [c.id, 2]))
+    const e = await suppliersUC.createEvaluation(asObra, { supplierId: homologated.id, workName: 'Obra Teste', reference: 'PC-1', scores, comment: null })
+    expect(e.average).toBe(2)
+
+    const [notHomologated] = await db.select().from(schema.suppliers).where(eq(schema.suppliers.document, CNPJ2))
+    await expect(suppliersUC.createEvaluation(asObra, { supplierId: notHomologated.id, workName: 'Obra', scores, comment: null } as any)).rejects.toMatchObject({ code: 'NOT_HOMOLOGATED' })
+
+    const mine = await suppliersUC.myEvaluations(asObra)
+    expect(mine).toHaveLength(1)
+    expect(mine[0]).toMatchObject({ supplierId: homologated.id, workName: 'Obra Teste', reference: 'PC-1', average: 2 })
+    // a Obra continua sem ver a base nem o Painel
+    await expect(suppliersUC.listSuppliers(asObra)).rejects.toMatchObject({ status: 403 })
+    await expect(suppliersUC.getSupplier(asObra, homologated.id)).rejects.toMatchObject({ status: 403 })
   })
 })

@@ -7,9 +7,11 @@ import type { z } from 'zod'
 import type {
   CompanyDTO,
   DocumentLookupDTO,
+  EvaluableSupplierDTO,
   EvaluationDTO,
   evaluationSchema,
   ImportResultDTO,
+  MyEvaluationDTO,
   RiskCheckDTO,
   SupplierFullDTO,
   SupplierListItemDTO,
@@ -21,13 +23,13 @@ import { personKindOf } from '../../../shared/domain/document-number'
 import { UAU_ROUTES } from '../../../shared/domain/uau-payload'
 import { selectUauSuppliers, UAU_SYNC_MAX_CODE, UAU_SYNC_RANGE, UAU_SYNC_STOP_AFTER_EMPTY } from '../../../shared/domain/uau-suppliers'
 import { documentChecklist, expiryState } from '../../../shared/domain/documents'
-import { weightedAverage } from '../../../shared/domain/evaluation'
+import { monthKey, supplierScores, weightedAverage } from '../../../shared/domain/evaluation'
 import { CLOSED_STATUSES, type RequestStatus } from '../../../shared/domain/request/status'
 import { evaluateRisk, type RiskFacts, type RiskLevel } from '../../../shared/domain/risk'
 import { PERMISSIONS } from '../../../shared/domain/roles'
 import type { SupplierStatus } from '../../../shared/domain/supplier'
 import { schema } from '../../infrastructure/db/client'
-import { AppError, IntegrationError, notFound, requirePermission } from '../context'
+import { AppError, can, IntegrationError, notFound, requirePermission } from '../context'
 import { toRiskCheck, toSupplierDetail } from '../mappers'
 import type { UseCaseDeps } from '../ports'
 import { loadDocuments, loadModel, notFromDroppedRequest, userNames } from '../shared'
@@ -96,7 +98,14 @@ export async function listSuppliers(deps: UseCaseDeps): Promise<SupplierListItem
     .orderBy(suppliers.legalName)
 
   const evals = await deps.db
-    .select({ supplierId: evaluations.supplierId, avg: sql<string>`avg(${evaluations.average})`, n: sql<number>`count(*)::int` })
+    .select({
+      supplierId: evaluations.supplierId,
+      avg: sql<string>`avg(${evaluations.average})`,
+      n: sql<number>`count(${evaluations.average})::int`,
+      // média do mês corrente no horário de Brasília (mesma regra de supplierScores)
+      monthAvg: sql<string | null>`avg(${evaluations.average}) filter (where to_char(${evaluations.createdAt} at time zone 'America/Sao_Paulo', 'YYYY-MM') = ${monthKey(today)})`,
+      monthN: sql<number>`count(${evaluations.average}) filter (where to_char(${evaluations.createdAt} at time zone 'America/Sao_Paulo', 'YYYY-MM') = ${monthKey(today)})::int`,
+    })
     .from(evaluations)
     .groupBy(evaluations.supplierId)
   const evalBy = new Map(evals.map((e) => [e.supplierId, e]))
@@ -129,8 +138,10 @@ export async function listSuppliers(deps: UseCaseDeps): Promise<SupplierListItem
       modelName,
       uauCodPes: s.uauCodPes,
       source: s.source as 'app' | 'uau',
-      average: e ? Math.round(Number(e.avg) * 100) / 100 : null,
+      average: e?.avg != null ? Math.round(Number(e.avg) * 100) / 100 : null,
       evaluations: e?.n ?? 0,
+      monthAverage: e?.monthAvg != null ? Math.round(Number(e.monthAvg) * 100) / 100 : null,
+      monthEvaluations: e?.monthN ?? 0,
       docsExpiring: d?.expiring ?? 0,
       docsExpired: d?.expired ?? 0,
       updatedAt: s.updatedAt.toISOString(),
@@ -182,14 +193,15 @@ export async function getSupplier(deps: UseCaseDeps, id: string): Promise<Suppli
       .where(eq(requests.supplierId, id))
       .orderBy(desc(requests.createdAt)),
   ])
-  const avgs = evals.map((e) => e.average).filter((a): a is number => a !== null)
+  const scores = supplierScores(evals, deps.ctx.now())
   return {
     supplier: toSupplierDetail(row.s, row.modelName),
     documents: docs,
     riskChecks: risk,
     evaluations: evals,
     criteria,
-    average: avgs.length ? Math.round((avgs.reduce((a, b) => a + b, 0) / avgs.length) * 100) / 100 : null,
+    average: scores.overall,
+    scores,
     requests: reqs.map((r) => ({ id: r.id, number: r.number, status: r.status as RequestStatus, createdAt: r.createdAt.toISOString() })),
   }
 }
@@ -399,10 +411,55 @@ export async function syncFromUau(deps: UseCaseDeps, input: z.infer<typeof uauSy
 
 // ----------------------------------------------------------------------------- avaliações
 
+/**
+ * Busca da tela "Avaliar" (Obra): só homologados, só nome e CNPJ. Exige ao menos 2 letras
+ * ou 3 dígitos para não devolver a base inteira.
+ */
+export async function searchEvaluableSuppliers(deps: UseCaseDeps, q: string): Promise<EvaluableSupplierDTO[]> {
+  requirePermission(deps.ctx.actor, PERMISSIONS.evaluationCreate)
+  const term = q.trim().slice(0, 80)
+  const digits = term.replace(/\D/g, '')
+  if (term.length < 2) return []
+  // % e _ digitados valem como texto, não como curinga do ilike
+  const like = `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
+  const match = sql`(${suppliers.legalName} ilike ${like} or ${suppliers.tradeName} ilike ${like}${digits.length >= 3 ? sql` or ${suppliers.document} like ${digits + '%'}` : sql``})`
+  return deps.db
+    .select({ id: suppliers.id, legalName: suppliers.legalName, tradeName: suppliers.tradeName, document: suppliers.document })
+    .from(suppliers)
+    .where(and(eq(suppliers.status, 'homologado'), match))
+    .orderBy(suppliers.legalName)
+    .limit(20)
+}
+
+/** Avaliações feitas pelo próprio usuário, mais recentes primeiro. */
+export async function myEvaluations(deps: UseCaseDeps): Promise<MyEvaluationDTO[]> {
+  requirePermission(deps.ctx.actor, PERMISSIONS.evaluationCreate)
+  const rows = await deps.db
+    .select({ e: evaluations, legalName: suppliers.legalName, tradeName: suppliers.tradeName })
+    .from(evaluations)
+    .innerJoin(suppliers, eq(suppliers.id, evaluations.supplierId))
+    .where(eq(evaluations.evaluatorId, deps.ctx.actor.id))
+    .orderBy(desc(evaluations.createdAt))
+    .limit(100)
+  return rows.map(({ e, legalName, tradeName }) => ({
+    id: e.id,
+    supplierId: e.supplierId,
+    supplierName: tradeName || legalName,
+    workName: e.workName,
+    reference: e.reference,
+    average: e.average,
+    createdAt: e.createdAt.toISOString(),
+  }))
+}
+
 export async function createEvaluation(deps: UseCaseDeps, input: z.infer<typeof evaluationSchema>): Promise<EvaluationDTO> {
   requirePermission(deps.ctx.actor, PERMISSIONS.evaluationCreate)
-  const [s] = await deps.db.select({ id: suppliers.id }).from(suppliers).where(eq(suppliers.id, input.supplierId))
+  const [s] = await deps.db.select({ id: suppliers.id, status: suppliers.status }).from(suppliers).where(eq(suppliers.id, input.supplierId))
   if (!s) throw notFound('Fornecedor')
+  // Quem não gere fornecedores (ex.: Obra) só avalia homologados
+  if (s.status !== 'homologado' && !can(deps.ctx.actor, PERMISSIONS.supplierManage)) {
+    throw new AppError('NOT_HOMOLOGATED', 'Só fornecedores homologados podem ser avaliados.', 422)
+  }
   const criteria = (await listCriteria(deps)).filter((c) => c.active)
   const scores = Object.fromEntries(Object.entries(input.scores).filter(([k]) => criteria.some((c) => c.id === k)))
   const missing = criteria.filter((c) => scores[c.id] === undefined)

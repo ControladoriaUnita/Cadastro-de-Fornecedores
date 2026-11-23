@@ -7,6 +7,7 @@ import { onlyDigits, personKindOf } from '../domain/document-number'
 import type { ExpiryState, ReviewStatus } from '../domain/documents'
 import type { RequestAction } from '../domain/request/workflow'
 import { URGENCIES, type RequestStatus, type Urgency } from '../domain/request/status'
+import type { SupplierScores } from '../domain/evaluation'
 import { QUALIFICATION_ANSWERS, type QualificationItem } from '../domain/qualification'
 import { RISK_RULE_KEYS, RISK_SEVERITIES, type RiskFinding, type RiskLevel, type RiskRuleDefinition, type RiskSeverity } from '../domain/risk'
 import { ALL_PERMISSIONS, type Permission, type RoleKey } from '../domain/roles'
@@ -393,8 +394,12 @@ export interface SupplierListItemDTO {
   modelName: string | null
   uauCodPes: number | null
   source: 'app' | 'uau'
+  /** Média geral (todas as avaliações) */
   average: number | null
   evaluations: number
+  /** Média do mês corrente */
+  monthAverage: number | null
+  monthEvaluations: number
   docsExpiring: number
   docsExpired: number
   updatedAt: string
@@ -439,7 +444,10 @@ export interface SupplierFullDTO {
   riskChecks: RiskCheckDTO[]
   evaluations: EvaluationDTO[]
   criteria: CriterionDTO[]
+  /** Média geral (= scores.overall) */
   average: number | null
+  /** Média geral, média do mês e histórico dos últimos 12 meses */
+  scores: SupplierScores
   requests: { id: string; number: number; status: RequestStatus; createdAt: string }[]
 }
 
@@ -475,6 +483,25 @@ export interface ImportResultDTO {
   results: { document: string; outcome: 'importado' | 'ja_existe' | 'nao_encontrado' | 'erro'; message: string; supplierId: string | null }[]
 }
 
+/** Fornecedor que pode ser avaliado (busca da tela "Avaliar"): só o essencial, sem documentos nem risco. */
+export interface EvaluableSupplierDTO {
+  id: string
+  legalName: string
+  tradeName: string | null
+  document: string
+}
+
+/** Avaliação feita pelo próprio usuário (tela "Avaliar"). */
+export interface MyEvaluationDTO {
+  id: string
+  supplierId: string
+  supplierName: string
+  workName: string
+  reference: string | null
+  average: number | null
+  createdAt: string
+}
+
 export const evaluationSchema = z.object({
   supplierId: z.string().uuid(),
   workName: z.string().trim().min(2, 'Informe a obra').max(120),
@@ -491,9 +518,22 @@ export interface DashboardDTO {
   risk: Record<RiskLevel, number>
   documents: { expiring: number; expired: number }
   expiringList: { supplierId: string; supplierName: string; documentTypeName: string; expiresAt: string; expiry: ExpiryState }[]
-  topRated: { supplierId: string; supplierName: string; average: number; evaluations: number }[]
-  lowRated: { supplierId: string; supplierName: string; average: number; evaluations: number }[]
-  recentActivity: { requestId: string; number: number; supplierName: string; at: string; actorLabel: string; kind: string; toStatus: RequestStatus | null }[]
+  /** Mês das médias mensais ("2026-11", horário de Brasília) */
+  ratingMonth: string
+  /** 5 maiores e 5 menores médias gerais */
+  topRated: RatedSupplierDTO[]
+  worstRated: RatedSupplierDTO[]
+}
+
+export interface RatedSupplierDTO {
+  supplierId: string
+  supplierName: string
+  /** Média de todas as avaliações */
+  overall: number
+  overallCount: number
+  /** Média das avaliações do mês corrente */
+  month: number | null
+  monthCount: number
 }
 
 // ----------------------------------------------------------------------------- portal do fornecedor

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { formatDocument, isValidCnpj, isValidCpf, personKindOf } from './document-number'
 import { documentChecklist, expiryState } from './documents'
-import { weightedAverage } from './evaluation'
+import { monthKey, monthLabel, supplierScores, weightedAverage } from './evaluation'
 import { availableActions, transition, WorkflowError } from './request/workflow'
 import { defaultRuleConfigs, evaluateRisk, type RiskFacts } from './risk'
 import { DEFAULT_ROLES, permissionsFor, PERMISSIONS, roleKeyFromName } from './roles'
@@ -49,8 +49,8 @@ describe('workflow da solicitação', () => {
     expect(() => transition('em_analise', 'request_changes', analyst, { requesterId: 'r' })).toThrow(/motivo/)
     expect(() => transition('em_analise', 'supplier_submit', 'supplier', { requesterId: 'r' })).toThrow(WorkflowError)
   })
-  it('obra só abre e acompanha as próprias solicitações', () => {
-    expect(permissionsFor(['obra'], DEFAULT_ROLES)).toEqual(['request.create', 'request.read.own'])
+  it('obra abre e acompanha as próprias solicitações e avalia', () => {
+    expect(permissionsFor(['obra'], DEFAULT_ROLES)).toEqual(['request.create', 'request.read.own', 'evaluation.create'])
   })
   it('dev tem todas as permissões, mesmo sem estar no catálogo', () => {
     expect(permissionsFor(['dev'], [])).toEqual(expect.arrayContaining(Object.values(PERMISSIONS)))
@@ -218,5 +218,37 @@ describe('Base de fornecedores do UAU', () => {
     const r = selectUauSuppliers([pj(5, '11222333000181'), pj(9, '11222333000181'), pj(7, '11222333000181'), pj(8, '52998224725', { TipoPessoa: 0 })])
     expect(r.suppliers.map((s) => s.codPes)).toEqual([9])
     expect(r.skipped).toMatchObject({ duplicada: 2, pessoa_fisica: 1 })
+  })
+})
+
+describe('Médias de avaliação', () => {
+  const now = new Date('2026-11-23T15:00:00Z')
+  it('separa média geral e média do mês (horário de Brasília)', () => {
+    const s = supplierScores(
+      [
+        { average: 5, createdAt: '2026-11-02T12:00:00Z' },
+        { average: 3, createdAt: '2026-11-20T12:00:00Z' },
+        { average: 2, createdAt: '2026-10-10T12:00:00Z' },
+        { average: null, createdAt: '2026-11-21T12:00:00Z' },
+        // 01/11 às 01h UTC ainda é 31/10 em Brasília
+        { average: 1, createdAt: '2026-11-01T01:00:00Z' },
+      ],
+      now,
+    )
+    expect(s.overall).toBe(2.75)
+    expect(s.overallCount).toBe(4)
+    expect([s.month, s.monthCount]).toEqual([4, 2])
+    expect(s.monthly[0]).toEqual({ month: '2026-11', average: 4, count: 2 })
+    expect(s.monthly[1]).toEqual({ month: '2026-10', average: 1.5, count: 2 })
+    expect(s.monthly).toHaveLength(12)
+    expect(s.monthly[11]!.month).toBe('2025-12')
+  })
+  it('sem avaliações no mês, a média do mês fica vazia', () => {
+    const s = supplierScores([{ average: 4, createdAt: '2026-09-01T12:00:00Z' }], now)
+    expect([s.overall, s.month, s.monthCount]).toEqual([4, null, 0])
+  })
+  it('formata o mês', () => {
+    expect(monthKey('2026-01-01T02:00:00Z')).toBe('2025-12')
+    expect(monthLabel('2026-11')).toBe('nov/2026')
   })
 })

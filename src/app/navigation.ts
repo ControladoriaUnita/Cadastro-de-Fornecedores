@@ -8,6 +8,7 @@ export const PATHS = {
   requests: '/solicitacoes',
   newRequest: '/solicitacoes/nova',
   request: (id: string) => `/solicitacoes/${id}`,
+  evaluate: '/avaliar',
   suppliers: '/fornecedores',
   supplier: (id: string) => `/fornecedores/${id}`,
   validation: '/validacao',
@@ -26,6 +27,7 @@ export interface NavItem {
 export const NAV: NavItem[] = [
   { to: PATHS.home, label: 'Painel', anyOf: [PERMISSIONS.supplierRead], end: true },
   { to: PATHS.requests, label: 'Solicitações', anyOf: [PERMISSIONS.requestReadOwn, PERMISSIONS.requestReadAll] },
+  { to: PATHS.evaluate, label: 'Avaliar', anyOf: [PERMISSIONS.evaluationCreate] },
   { to: PATHS.suppliers, label: 'Fornecedores', anyOf: [PERMISSIONS.supplierRead] },
   { to: PATHS.validation, label: 'Validação ERP', anyOf: [PERMISSIONS.requestApprove] },
   { to: PATHS.models, label: 'Modelos', anyOf: [PERMISSIONS.modelRead] },

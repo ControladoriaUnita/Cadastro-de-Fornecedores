@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Star } from 'lucide-react'
-import type { CriterionDTO, EvaluationDTO, ModelDTO, SupplierFullDTO } from '@shared/contracts'
-import { SCORE_LABELS, weightedAverage } from '@shared/domain/evaluation'
+import type { ModelDTO, SupplierFullDTO } from '@shared/contracts'
+import { monthLabel, scoreBand } from '@shared/domain/evaluation'
 import { PERMISSIONS } from '@shared/domain/roles'
 import { SUPPLIER_STATUS_LABELS, SUPPLIER_STATUSES, type SupplierStatus } from '@shared/domain/supplier'
 import { PATHS } from '@/app/navigation'
@@ -11,94 +11,16 @@ import { CompanyCard } from '@/components/domain/CompanyCard'
 import { DocumentList } from '@/components/domain/DocumentList'
 import { ProfileView } from '@/components/domain/ProfileView'
 import { RequestStatusBadge, RiskBadge, SupplierStatusBadge } from '@/components/domain/badges'
+import { EvaluationDialog } from '@/components/domain/EvaluationDialog'
 import { RiskPanel } from '@/components/domain/RiskPanel'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { Alert, Badge, Button, Card, CardBody, CardHeader, Dialog, EmptyState, Field, Input, Kpi, Select, Skeleton, Tabs, Textarea } from '@/components/ui'
+import { Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, Kpi, Select, Skeleton, Tabs } from '@/components/ui'
 import { api, errorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDate, formatDocument, formatScore } from '@/utils/format'
 import { cn } from '@/utils/cn'
 
 type Tab = 'profile' | 'docs' | 'risk' | 'evaluations' | 'requests' | 'company'
-
-function Stars({ value, onChange, label }: { value: number; onChange: (v: number) => void; label: string }) {
-  return (
-    <div className="flex items-center gap-1" role="radiogroup" aria-label={label}>
-      {[1, 2, 3, 4, 5].map((n) => (
-        <button key={n} type="button" role="radio" aria-checked={value === n} aria-label={`${n} — ${SCORE_LABELS[n]}`} onClick={() => onChange(n)} className="rounded p-0.5">
-          <Star className={cn('size-6 transition', n <= value ? 'fill-primary text-primary' : 'text-ink-300 hover:text-primary')} />
-        </button>
-      ))}
-      <span className="ml-2 w-16 text-xs text-text-muted">{value ? SCORE_LABELS[value] : ''}</span>
-    </div>
-  )
-}
-
-function EvaluationDialog({ supplierId, criteria, onClose }: { supplierId: string; criteria: CriterionDTO[]; onClose: () => void }) {
-  const qc = useQueryClient()
-  const active = criteria.filter((c) => c.active)
-  const [scores, setScores] = useState<Record<string, number>>({})
-  const [workName, setWorkName] = useState('')
-  const [reference, setReference] = useState('')
-  const [comment, setComment] = useState('')
-  const avg = weightedAverage(active, scores)
-  const m = useMutation({
-    mutationFn: () => api<EvaluationDTO>('/evaluations', { method: 'POST', body: { supplierId, workName, reference: reference || null, scores, comment: comment || null } }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['supplier', supplierId] })
-      void qc.invalidateQueries({ queryKey: ['suppliers'] })
-      onClose()
-    },
-  })
-  const complete = active.every((c) => scores[c.id]) && workName.trim().length >= 2
-  return (
-    <Dialog
-      open
-      onClose={onClose}
-      width="min(92vw, 36rem)"
-      title="Avaliar fornecimento"
-      description="Notas de 1 a 5 por critério; a média considera o peso de cada um."
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose} className="mr-auto">
-            Cancelar
-          </Button>
-          <Button variant="primary" disabled={!complete} loading={m.isPending} onClick={() => m.mutate()}>
-            Salvar avaliação {avg !== null && `(${formatScore(avg)})`}
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Obra" required>
-            <Input value={workName} onChange={(e) => setWorkName(e.target.value)} />
-          </Field>
-          <Field label="Pedido / contrato">
-            <Input value={reference} onChange={(e) => setReference(e.target.value)} />
-          </Field>
-        </div>
-        <ul className="space-y-3">
-          {active.map((c) => (
-            <li key={c.id} className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="text-sm font-medium text-text">
-                  {c.name} <span className="text-xs text-text-muted">peso {c.weight}</span>
-                </p>
-                {c.description && <p className="text-xs text-text-muted">{c.description}</p>}
-              </div>
-              <Stars value={scores[c.id] ?? 0} onChange={(v) => setScores((s) => ({ ...s, [c.id]: v }))} label={c.name} />
-            </li>
-          ))}
-        </ul>
-        <Field label="Comentário">
-          <Textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={3} />
-        </Field>
-        {m.isError && <Alert tone="error">{errorMessage(m.error)}</Alert>}
-      </div>
-    </Dialog>
-  )
-}
 
 export default function SupplierPage() {
   const { id = '' } = useParams()
@@ -117,7 +39,7 @@ export default function SupplierPage() {
 
   if (q.isLoading) return <Skeleton className="h-96" />
   if (q.isError || !q.data) return <Alert tone="error">{errorMessage(q.error)}</Alert>
-  const { supplier: s, documents, riskChecks, evaluations, criteria, average, requests } = q.data
+  const { supplier: s, documents, riskChecks, evaluations, criteria, scores, requests } = q.data
   const model = models.data?.find((m) => m.id === s.modelId)
   const manage = can(PERMISSIONS.supplierManage)
   const criterionName = new Map(criteria.map((c) => [c.id, c.name]))
@@ -144,8 +66,13 @@ export default function SupplierPage() {
           )
         }
       />
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Kpi label="Avaliação média" value={average === null ? '—' : formatScore(average)} hint={`${evaluations.length} avaliação(ões)`} />
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <Kpi label="Média geral" value={scores.overall === null ? '—' : formatScore(scores.overall)} hint={`${scores.overallCount} avaliação(ões) no total`} />
+        <Kpi
+          label={`Média de ${monthLabel(scores.monthly[0]!.month)}`}
+          value={scores.month === null ? '—' : formatScore(scores.month)}
+          hint={`${scores.monthCount} avaliação(ões) no mês`}
+        />
         <Kpi label="Código no UAU" value={s.uauCodPes ?? '—'} hint={s.uauSyncedAt ? `Sincronizado ${formatDate(s.uauSyncedAt)}` : 'Não gravado'} />
         <Kpi label="Documentos vencidos" value={documents.filter((d) => d.expiry === 'vencido').length} tone={documents.some((d) => d.expiry === 'vencido') ? 'error' : undefined} hint={`${documents.filter((d) => d.expiry === 'vencendo').length} vencendo`} />
         <Kpi label="Última análise de risco" value={s.riskCheckedAt ? formatDate(s.riskCheckedAt) : '—'} />
@@ -183,6 +110,24 @@ export default function SupplierPage() {
             )}
             {tab === 'evaluations' &&
               (evaluations.length ? (
+                <>
+                <div className="mb-5">
+                  <p className="mb-2 text-sm font-semibold">Média por mês (últimos 12)</p>
+                  <ol className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                    {scores.monthly.map((m) => {
+                      const band = scoreBand(m.average)
+                      return (
+                        <li key={m.month} className="rounded-control border border-border-soft px-2 py-1.5 text-center">
+                          <p className="text-xs text-text-muted">{monthLabel(m.month)}</p>
+                          <p className={cn('tabular text-sm font-semibold', band === 'critico' && 'text-error', band === 'atencao' && 'text-warning', m.average === null && 'font-normal text-ink-400')}>
+                            {m.average === null ? '—' : formatScore(m.average)}
+                          </p>
+                          <p className="text-[11px] text-text-muted">{m.count ? `${m.count} aval.` : 'sem aval.'}</p>
+                        </li>
+                      )
+                    })}
+                  </ol>
+                </div>
                 <ul className="divide-y divide-border-soft">
                   {evaluations.map((e) => (
                     <li key={e.id} className="py-4 first:pt-0">
@@ -209,6 +154,7 @@ export default function SupplierPage() {
                     </li>
                   ))}
                 </ul>
+                </>
               ) : (
                 <EmptyState title="Sem avaliações" description="Avalie ao fim de cada fornecimento: prazo, qualidade, segurança…" />
               ))}
@@ -259,7 +205,7 @@ export default function SupplierPage() {
           </Card>
         )}
       </div>
-      {evaluating && <EvaluationDialog supplierId={s.id} criteria={criteria} onClose={() => setEvaluating(false)} />}
+      {evaluating && <EvaluationDialog supplierId={s.id} supplierName={s.tradeName || s.legalName} onClose={() => setEvaluating(false)} />}
     </>
   )
 }

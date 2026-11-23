@@ -288,10 +288,15 @@ export default function SuppliersPage() {
                     </td>
                     <td className="px-4 py-3">
                       {s.average !== null ? (
-                        <span className="inline-flex items-center gap-1 font-medium">
-                          <Star className="size-3.5 fill-primary text-primary" aria-hidden /> {formatScore(s.average)}
-                          <span className="text-xs font-normal text-text-muted">({s.evaluations})</span>
-                        </span>
+                        <>
+                          <span className="inline-flex items-center gap-1 font-medium" title="Média geral">
+                            <Star className="size-3.5 fill-primary text-primary" aria-hidden /> {formatScore(s.average)}
+                            <span className="text-xs font-normal text-text-muted">({s.evaluations})</span>
+                          </span>
+                          <p className="tabular text-xs text-text-muted" title="Média das avaliações do mês corrente">
+                            no mês: {s.monthAverage === null ? '—' : formatScore(s.monthAverage)}
+                          </p>
+                        </>
                       ) : (
                         <span className="text-text-muted">—</span>
                       )}

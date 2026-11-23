@@ -275,6 +275,8 @@ staff('POST', '/suppliers/:id/risk', async (deps, c) => {
   return suppliersUC.getSupplier(deps, id(c))
 })
 staff('POST', '/evaluations', async (deps, c) => suppliersUC.createEvaluation(deps, parse(evaluationSchema, await c.json())), 201)
+staff('GET', '/evaluations/mine', (deps) => suppliersUC.myEvaluations(deps))
+staff('GET', '/evaluate/suppliers', async (deps, c) => suppliersUC.searchEvaluableSuppliers(deps, c.url.searchParams.get('q') ?? ''))
 
 // configurações (perfil dev)
 staff('GET', '/models', async (deps, c) => settings.listModels(deps, { onlyActive: c.url.searchParams.get('active') === '1' }))

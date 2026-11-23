@@ -17,6 +17,7 @@ const SupplierPage = lazy(() => import('@/features/suppliers/SupplierPage'))
 const ValidationQueuePage = lazy(() => import('@/features/validation/ValidationQueuePage'))
 const ValidationPage = lazy(() => import('@/features/validation/ValidationPage'))
 const ModelsPage = lazy(() => import('@/features/models/ModelsPage'))
+const EvaluatePage = lazy(() => import('@/features/evaluations/EvaluatePage'))
 const DevPanelPage = lazy(() => import('@/features/dev/DevPanelPage'))
 const PortalPage = lazy(() => import('@/features/portal/PortalPage'))
 
@@ -74,6 +75,7 @@ export function App() {
           <Route path={PATHS.requests} element={g([P.requestReadOwn, P.requestReadAll], <KanbanPage />)} />
           <Route path={PATHS.newRequest} element={g([P.requestCreate], <NewRequestPage />)} />
           <Route path="/solicitacoes/:id" element={g([P.requestReadOwn, P.requestReadAll], <RequestPage />)} />
+          <Route path={PATHS.evaluate} element={g([P.evaluationCreate], <EvaluatePage />)} />
           <Route path={PATHS.suppliers} element={g([P.supplierRead], <SuppliersPage />)} />
           <Route path="/fornecedores/:id" element={g([P.supplierRead], <SupplierPage />)} />
           <Route path={PATHS.validation} element={g([P.requestApprove], <ValidationQueuePage />)} />

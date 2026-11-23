@@ -49,7 +49,7 @@ export const PERMISSION_INFO: Record<Permission, { group: string; label: string;
   'request.approve': { group: 'Solicitações', label: 'Aprovar e gravar no UAU', description: 'Tela de validação ERP e gravação no UAU.' },
   'supplier.read': { group: 'Fornecedores', label: 'Ver fornecedores e painel', description: 'Base de fornecedores, fichas, documentos e indicadores.' },
   'supplier.manage': { group: 'Fornecedores', label: 'Gerir fornecedores', description: 'Mudar situação e modelo, rodar análise de risco, importar do UAU.' },
-  'evaluation.create': { group: 'Fornecedores', label: 'Avaliar fornecedores', description: 'Dar notas ao fim de um fornecimento.' },
+  'evaluation.create': { group: 'Fornecedores', label: 'Avaliar fornecedores', description: 'Tela "Avaliar": dar notas aos fornecedores homologados (sem ver documentos nem risco).' },
   'model.read': { group: 'Configurações', label: 'Ver modelos', description: 'Consultar os modelos de fornecedor e documentos exigidos.' },
   'settings.manage': { group: 'Configurações', label: 'Editar configurações', description: 'Modelos, tipos de documento, critérios de avaliação e regras de risco.' },
   'users.manage': { group: 'Administração', label: 'Gerir usuários e cargos', description: 'Criar usuários, cargos e definir permissões.' },
@@ -75,8 +75,8 @@ export const DEFAULT_ROLES: RoleDefinition[] = [
   {
     key: 'obra',
     name: 'Obra',
-    description: 'Faz o pré-cadastro do fornecedor e acompanha as próprias solicitações.',
-    permissions: [P.requestCreate, P.requestReadOwn],
+    description: 'Faz o pré-cadastro do fornecedor, acompanha as próprias solicitações e avalia os fornecedores homologados.',
+    permissions: [P.requestCreate, P.requestReadOwn, P.evaluationCreate],
   },
   {
     key: 'analista',
