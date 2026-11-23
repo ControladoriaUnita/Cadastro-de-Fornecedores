@@ -6,6 +6,7 @@ import type { RequestDetailDTO, UauPreviewDTO } from '@shared/contracts'
 import { PERMISSIONS } from '@shared/domain/roles'
 import { PATHS } from '@/app/navigation'
 import { ProfileView } from '@/components/domain/ProfileView'
+import { QualificationForm } from '@/components/domain/QualificationForm'
 import { RequestStatusBadge } from '@/components/domain/badges'
 import { ResendAttachments } from '@/components/domain/ResendAttachments'
 import { RiskPanel } from '@/components/domain/RiskPanel'
@@ -146,6 +147,13 @@ export default function ValidationPage() {
               </CardBody>
             </Card>
           </div>
+
+          <Card>
+            <CardHeader title="Formulário de qualificação" description="Respondido por Suprimentos; vai ao UAU em PDF, junto com os documentos." />
+            <CardBody>
+              <QualificationForm requestId={d.id} qualification={d.qualification} editable={false} />
+            </CardBody>
+          </Card>
 
           <Card>
             <CardHeader title="Ficha cadastral" />

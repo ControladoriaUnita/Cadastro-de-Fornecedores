@@ -97,6 +97,17 @@ export const evaluationCriteria = pgTable('evaluation_criteria', {
   createdAt: createdAt(),
 })
 
+/** Perguntas do formulário de qualificação (editáveis no Painel dev; respondidas por Suprimentos). */
+export const qualificationQuestions = pgTable('qualification_questions', {
+  id: id(),
+  text: text('text').notNull(),
+  /** Mostra a opção "Não se aplica" além de Sim/Não */
+  allowNa: boolean('allow_na').notNull().default(false),
+  active: boolean('active').notNull().default(true),
+  sort: integer('sort').notNull().default(0),
+  createdAt: createdAt(),
+})
+
 export const riskRuleConfigs = pgTable('risk_rule_configs', {
   key: text('key').primaryKey(),
   severity: text('severity').notNull(),
@@ -158,6 +169,8 @@ export const requests = pgTable(
     /** Resultado da gravação no UAU (rotas chamadas, respostas, simulação) */
     uauResult: jsonb('uau_result').$type<Record<string, unknown>>(),
     uauSimulated: boolean('uau_simulated'),
+    /** Quando o PDF do formulário de qualificação foi anexado no UAU */
+    qualificationUauAt: timestamp('qualification_uau_at', { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     closedAt: timestamp('closed_at', { withTimezone: true }),
@@ -246,6 +259,23 @@ export const riskChecks = pgTable(
     sources: jsonb('sources').$type<Record<string, unknown>>().notNull(),
   },
   (t) => [index('risk_checks_supplier_idx').on(t.supplierId)],
+)
+
+/** Respostas do formulário de qualificação, uma por pergunta em cada solicitação. */
+export const qualificationAnswers = pgTable(
+  'qualification_answers',
+  {
+    id: id(),
+    requestId: uuid('request_id').notNull().references(() => requests.id, { onDelete: 'cascade' }),
+    questionId: uuid('question_id').notNull().references(() => qualificationQuestions.id),
+    /** Texto da pergunta no momento da resposta (a pergunta pode ser editada depois) */
+    questionText: text('question_text').notNull(),
+    /** sim | nao | na */
+    answer: text('answer').notNull(),
+    answeredBy: uuid('answered_by').references(() => users.id),
+    answeredAt: timestamp('answered_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('qualification_answers_request_question_idx').on(t.requestId, t.questionId)],
 )
 
 export const evaluations = pgTable(

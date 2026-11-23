@@ -10,7 +10,7 @@
  * Com UAU_GRAVACAO=simulacao nada é gravado: o resultado fica marcado como simulado.
  */
 import { and, eq, inArray, isNull } from 'drizzle-orm'
-import type { UauPreviewDTO } from '../../../shared/contracts'
+import type { RequestDetailDTO, UauPreviewDTO } from '../../../shared/contracts'
 import { formatDocument } from '../../../shared/domain/document-number'
 import { PERMISSIONS } from '../../../shared/domain/roles'
 import { supplierProfileSchema, type SupplierProfile } from '../../../shared/domain/supplier'
@@ -31,6 +31,7 @@ import { AppError, requirePermission } from '../context'
 import { notifyAddresses } from '../notifications'
 import type { UauCallResult, UseCaseDeps } from '../ports'
 import { recordEvent } from '../shared'
+import { qualificationPdf } from './qualification'
 import { approvalBlockers, getRequest } from './requests'
 import { checkUauPerson } from './uau-people'
 
@@ -84,16 +85,20 @@ export async function uauPreview(deps: UseCaseDeps, requestId: string): Promise<
       const bank = buildBankBody(p, codPlaceholder)
       if (bank) steps.push({ route: UAU_ROUTES.saveBank, description: 'Conta bancária padrão', body: bank })
     }
-    if (docs.length) {
+    const withForm = detail.qualification.complete && !detail.qualification.uauAttachedAt
+    if (docs.length || withForm) {
       // Pessoa nova: o código só existe depois do GravarPessoa
       const folder = duplicate.codPes
         ? await resolveAttachmentFolder(deps, duplicate.codPes, folderName(detail.supplier))
         : joinFolder(uauAttachmentFolder(), supplierFolderName(0, folderName(detail.supplier)).replace(/^0 - /, '<código> - '))
       const body = buildAttachBody(
-        docs.map((d) => ({ fileName: d.fileName, extension: EXT[d.mime] ?? 'pdf', base64: `<${d.size} bytes>` })),
+        [
+          ...docs.map((d) => ({ fileName: d.fileName, extension: EXT[d.mime] ?? 'pdf', base64: `<${d.size} bytes>` })),
+          ...(withForm ? [{ fileName: qualificationFileName(detail.number), extension: 'pdf', base64: '<PDF gerado na gravação>' }] : []),
+        ],
         { codPes: codPlaceholder, folder, user: uauUser(), company: uauCompany() },
       )
-      steps.push({ route: UAU_ROUTES.attachFiles, description: `Anexa ${docs.length} documento(s) aprovado(s)`, body })
+      steps.push({ route: UAU_ROUTES.attachFiles, description: `Anexa ${docs.length} documento(s) aprovado(s)${withForm ? ' e o formulário de qualificação (PDF)' : ''}`, body })
     }
   }
   const typeNames = new Map(detail.documents.map((d) => [d.id, d.documentTypeName]))
@@ -167,7 +172,7 @@ export async function approveRequest(deps: UseCaseDeps, requestId: string) {
   }
 
   // 3) anexos
-  const attach = await attachPendingDocuments(deps, detail.supplier, codPes, user, now)
+  const attach = await attachPendingDocuments(deps, detail, codPes, user, now)
   if (attach.call) calls.push(attach.call)
   if (attach.warning) warnings.push(attach.warning)
 
@@ -231,17 +236,25 @@ async function foundedAt(deps: UseCaseDeps, s: { document: string; personKind: s
  */
 async function attachPendingDocuments(
   deps: UseCaseDeps,
-  supplier: { id: string; tradeName: string | null; legalName: string },
+  detail: RequestDetailDTO,
   codPes: number | null,
   user: string,
   now: Date,
 ): Promise<{ count: number; ok: boolean; call?: Omit<UauCallResult, 'data'> & { data?: unknown; description: string }; warning?: string }> {
+  const supplier = detail.supplier
   const toAttach = (await approvedDocuments(deps, supplier.id)).filter((d) => !d.uauAttachedAt)
-  if (!toAttach.length) return { count: 0, ok: true }
+  // O formulário de qualificação vai junto, em PDF, uma vez só
+  const withForm = detail.qualification.complete && !detail.qualification.uauAttachedAt
+  const count = toAttach.length + (withForm ? 1 : 0)
+  if (!count) return { count: 0, ok: true }
   try {
     const files = await Promise.all(
       toAttach.map(async (d) => ({ fileName: d.fileName, extension: EXT[d.mime] ?? 'pdf', base64: (await deps.storage.get(d.storageKey)).toString('base64') })),
     )
+    if (withForm) {
+      const pdf = await qualificationPdf({ number: detail.number, supplierName: supplier.legalName, document: supplier.document, codPes, qualification: detail.qualification, generatedAt: now })
+      files.push({ fileName: qualificationFileName(detail.number), extension: 'pdf', base64: pdf.toString('base64') })
+    }
     const r = await deps.uau.call(
       UAU_ROUTES.attachFiles,
       buildAttachBody(files, {
@@ -251,14 +264,15 @@ async function attachPendingDocuments(
         company: uauCompany(),
       }),
     )
-    const call = { ...r, data: r.simulated ? undefined : r.data, description: `Anexos (${toAttach.length})` }
+    const call = { ...r, data: r.simulated ? undefined : r.data, description: `Anexos (${count})` }
     if (r.ok && !r.simulated) {
-      await deps.db.update(documents).set({ uauAttachedAt: now }).where(inArray(documents.id, toAttach.map((d) => d.id)))
-      return { count: toAttach.length, ok: true, call }
+      if (toAttach.length) await deps.db.update(documents).set({ uauAttachedAt: now }).where(inArray(documents.id, toAttach.map((d) => d.id)))
+      if (withForm) await deps.db.update(requests).set({ qualificationUauAt: now }).where(eq(requests.id, detail.id))
+      return { count, ok: true, call }
     }
-    return { count: toAttach.length, ok: !!r.simulated, call, warning: r.simulated ? undefined : `Anexos: HTTP ${r.status}${uauMessage(r.data)}` }
+    return { count, ok: !!r.simulated, call, warning: r.simulated ? undefined : `Anexos: HTTP ${r.status}${uauMessage(r.data)}` }
   } catch (err) {
-    return { count: toAttach.length, ok: false, warning: `Anexos: ${err instanceof Error ? err.message : 'falhou'}` }
+    return { count, ok: false, warning: `Anexos: ${err instanceof Error ? err.message : 'falhou'}` }
   }
 }
 
@@ -274,8 +288,8 @@ export async function resendAttachments(deps: UseCaseDeps, requestId: string) {
   if (!codPes) throw new AppError('NO_UAU_CODE', 'O fornecedor está sem o código da pessoa no UAU.', 409)
   if (!deps.uau.writeEnabled) throw new AppError('UAU_SIMULATION', 'A gravação no UAU está em simulação (UAU_GRAVACAO=simulacao).', 409)
 
-  const res = await attachPendingDocuments(deps, detail.supplier, codPes, uauUser(), deps.ctx.now())
-  if (!res.count) throw new AppError('NOTHING_PENDING', 'Todos os documentos aprovados já estão anexados no UAU.', 409)
+  const res = await attachPendingDocuments(deps, detail, codPes, uauUser(), deps.ctx.now())
+  if (!res.count) throw new AppError('NOTHING_PENDING', 'Todos os documentos aprovados e o formulário de qualificação já estão anexados no UAU.', 409)
   await recordEvent(deps.db, {
     requestId,
     actorId: deps.ctx.actor.id,
@@ -286,3 +300,5 @@ export async function resendAttachments(deps: UseCaseDeps, requestId: string) {
   if (!res.ok) throw new AppError('UAU_ATTACH_FAILED', `O UAU recusou os anexos. ${res.warning ?? ''}`.trim(), 502)
   return getRequest(deps, requestId)
 }
+
+const qualificationFileName = (n: number) => `Formulario de qualificacao - solicitacao ${n}.pdf`

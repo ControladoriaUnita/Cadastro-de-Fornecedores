@@ -16,6 +16,8 @@ import {
   documentTypeSchema,
   evaluationSchema,
   importFromUauSchema,
+  qualificationAnswersSchema,
+  qualificationQuestionSchema,
   uauSyncSchema,
   inviteSchema,
   modelSchema,
@@ -39,6 +41,7 @@ import * as approval from '../application/use-cases/approval'
 import { getDashboard } from '../application/use-cases/dashboard'
 import * as dev from '../application/use-cases/dev'
 import * as portal from '../application/use-cases/portal'
+import * as qualification from '../application/use-cases/qualification'
 import * as requests from '../application/use-cases/requests'
 import * as settings from '../application/use-cases/settings'
 import * as suppliersUC from '../application/use-cases/suppliers'
@@ -238,6 +241,13 @@ staff('POST', '/requests/:id/return', async (deps, c) => requests.returnToAnalys
 staff('GET', '/requests/:id/uau-preview', async (deps, c) => approval.uauPreview(deps, id(c)))
 staff('POST', '/requests/:id/approve', async (deps, c) => approval.approveRequest(deps, id(c)))
 staff('POST', '/requests/:id/uau-attachments', async (deps, c) => approval.resendAttachments(deps, id(c)))
+staff('PUT', '/requests/:id/qualification', async (deps, c) => {
+  await qualification.saveQualification(deps, id(c), parse(qualificationAnswersSchema, await c.json()))
+  return requests.getRequest(deps, id(c))
+})
+staff('GET', '/qualification-questions', (deps) => qualification.listQualificationQuestions(deps))
+staff('POST', '/qualification-questions', async (deps, c) => qualification.saveQualificationQuestion(deps, null, parse(qualificationQuestionSchema, await c.json())), 201)
+staff('PUT', '/qualification-questions/:id', async (deps, c) => qualification.saveQualificationQuestion(deps, id(c), parse(qualificationQuestionSchema, await c.json())))
 staff('POST', '/requests/:id/documents', async (deps, c) => requests.staffUpload(deps, id(c), await uploadForm(c)))
 staff('POST', '/requests/:id/documents/:docId/review', async (deps, c) =>
   requests.reviewDocument(deps, id(c), id(c, 'docId'), parse(reviewDocumentSchema, await c.json())))

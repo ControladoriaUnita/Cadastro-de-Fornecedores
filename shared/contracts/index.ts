@@ -7,6 +7,7 @@ import { onlyDigits, personKindOf } from '../domain/document-number'
 import type { ExpiryState, ReviewStatus } from '../domain/documents'
 import type { RequestAction } from '../domain/request/workflow'
 import { URGENCIES, type RequestStatus, type Urgency } from '../domain/request/status'
+import { QUALIFICATION_ANSWERS, type QualificationItem } from '../domain/qualification'
 import { RISK_RULE_KEYS, RISK_SEVERITIES, type RiskFinding, type RiskLevel, type RiskRuleDefinition, type RiskSeverity } from '../domain/risk'
 import { ALL_PERMISSIONS, type Permission, type RoleKey } from '../domain/roles'
 import { SUPPLIER_STATUSES, type SupplierStatus } from '../domain/supplier'
@@ -125,6 +126,36 @@ export const criterionSchema = z.object({
   weight: z.number().int().min(1).max(10),
   active: z.boolean().default(true),
   sort: z.number().int().default(0),
+})
+
+// ----------------------------------------------------------------------------- formulário de qualificação
+
+export interface QualificationQuestionDTO {
+  id: string
+  text: string
+  allowNa: boolean
+  active: boolean
+  sort: number
+}
+
+export const qualificationQuestionSchema = z.object({
+  text: z.string().trim().min(3, 'Escreva a pergunta').max(200),
+  allowNa: z.boolean().default(false),
+  active: z.boolean().default(true),
+  sort: z.number().int().default(0),
+})
+
+export interface QualificationDTO {
+  items: (QualificationItem & { answeredByName: string | null; answeredAt: string | null })[]
+  answered: number
+  total: number
+  complete: boolean
+  /** Quando o PDF com as respostas foi anexado no UAU */
+  uauAttachedAt: string | null
+}
+
+export const qualificationAnswersSchema = z.object({
+  answers: z.array(z.object({ questionId: z.string().uuid(), answer: z.enum(QUALIFICATION_ANSWERS) })).min(1).max(100),
 })
 
 export interface RiskRuleDTO {
@@ -330,6 +361,8 @@ export interface RequestDetailDTO {
   supplier: SupplierDetailDTO
   /** null = pré-cadastro ainda sem modelo (Suprimentos define na triagem) */
   model: ModelDTO | null
+  /** Formulário de qualificação respondido por Suprimentos */
+  qualification: QualificationDTO
   documents: DocumentDTO[]
   checklist: ChecklistDTO
   latestRisk: RiskCheckDTO | null

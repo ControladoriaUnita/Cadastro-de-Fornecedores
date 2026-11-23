@@ -11,6 +11,7 @@ import { PATHS } from '@/app/navigation'
 import { CompanyCard } from '@/components/domain/CompanyCard'
 import { DocumentList, type UploadValues } from '@/components/domain/DocumentList'
 import { ProfileView } from '@/components/domain/ProfileView'
+import { QualificationForm } from '@/components/domain/QualificationForm'
 import { RequestStatusBadge, RiskBadge } from '@/components/domain/badges'
 import { ResendAttachments } from '@/components/domain/ResendAttachments'
 import { RiskPanel } from '@/components/domain/RiskPanel'
@@ -21,7 +22,7 @@ import { api, errorBlockers, errorMessage, upload } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDate, formatDateTime, formatDocument } from '@/utils/format'
 
-type Tab = 'docs' | 'risk' | 'profile' | 'company' | 'history'
+type Tab = 'docs' | 'qualification' | 'risk' | 'profile' | 'company' | 'history'
 
 const ACTION_ENDPOINT: Partial<Record<RequestAction, string>> = {
   invite: 'invite',
@@ -238,6 +239,7 @@ export default function RequestPage() {
               onChange={setTab}
               items={[
                 { key: 'docs', label: 'Documentos', count: d.documents.length },
+                { key: 'qualification', label: 'Qualificação' },
                 { key: 'risk', label: 'Risco' },
                 { key: 'profile', label: 'Ficha do fornecedor' },
                 ...(d.supplier.receita ? [{ key: 'company' as Tab, label: 'Receita Federal' }] : []),
@@ -277,6 +279,15 @@ export default function RequestPage() {
                 }
               />
             )}
+            {tab === 'qualification' && (
+              <QualificationForm
+                key={d.updatedAt}
+                requestId={d.id}
+                qualification={d.qualification}
+                editable={analyze && ['solicitado', 'aguardando_fornecedor', 'em_analise', 'pendencias'].includes(d.status)}
+                onSaved={set}
+              />
+            )}
             {tab === 'risk' && (
               <>
                 {risk.isError && <Alert tone="error" className="mb-4">{errorMessage(risk.error)}</Alert>}
@@ -310,6 +321,12 @@ export default function RequestPage() {
                   {c.expired.length > 0 && <li className="text-error">• {c.expired.length} vencido(s)</li>}
                 </ul>
               )}
+              <div className="flex items-center justify-between">
+                <span className="text-text-muted">Formulário de qualificação</span>
+                <Badge tone={d.qualification.complete ? 'success' : 'warning'}>
+                  {d.qualification.answered}/{d.qualification.total}
+                </Badge>
+              </div>
               <div className="flex items-center justify-between">
                 <span className="text-text-muted">Risco</span>
                 {d.latestRisk ? <RiskBadge level={d.latestRisk.level} compact /> : <Badge>Não avaliado</Badge>}

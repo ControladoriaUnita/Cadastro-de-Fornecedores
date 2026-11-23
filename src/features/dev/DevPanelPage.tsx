@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle2, Pencil, Plus, XCircle } from 'lucide-react'
-import type { CriterionDTO, DiagnosticsDTO, DocumentTypeDTO, OutboxItemDTO, RiskRuleDTO } from '@shared/contracts'
+import { ArrowDown, ArrowUp, CheckCircle2, Pencil, Plus, XCircle } from 'lucide-react'
+import type { CriterionDTO, DiagnosticsDTO, DocumentTypeDTO, OutboxItemDTO, QualificationQuestionDTO, RiskRuleDTO } from '@shared/contracts'
 import { RISK_SEVERITIES, SEVERITY_LABELS, type RiskSeverity } from '@shared/domain/risk'
 import { PERMISSIONS, type Permission } from '@shared/domain/roles'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -11,7 +11,7 @@ import { useAuth } from '@/lib/auth'
 import { formatDateTime } from '@/utils/format'
 import { RolesManager, UsersManager } from './AccessManagement'
 
-type Tab = 'diag' | 'users' | 'roles' | 'types' | 'criteria' | 'risk' | 'outbox'
+type Tab = 'diag' | 'users' | 'roles' | 'types' | 'qualification' | 'criteria' | 'risk' | 'outbox'
 
 const Ok = ({ ok, children }: { ok: boolean; children: React.ReactNode }) => (
   <span className="inline-flex items-center gap-1.5 text-sm">
@@ -126,6 +126,84 @@ function DocumentTypes() {
             )}
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" className="accent-primary" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} /> Ativo
+            </label>
+            {save.isError && <Alert tone="error">{errorMessage(save.error)}</Alert>}
+          </div>
+        </Dialog>
+      )}
+    </Card>
+  )
+}
+
+function QualificationQuestions() {
+  const qc = useQueryClient()
+  const q = useQuery({ queryKey: ['qualification-questions'], queryFn: () => api<QualificationQuestionDTO[]>('/qualification-questions') })
+  const [edit, setEdit] = useState<QualificationQuestionDTO | 'new' | null>(null)
+  const [form, setForm] = useState({ text: '', allowNa: false, active: true, sort: 0 })
+  const refresh = () => qc.invalidateQueries({ queryKey: ['qualification-questions'] })
+  const open = (x: QualificationQuestionDTO | 'new') => {
+    setEdit(x)
+    setForm(x === 'new' ? { text: '', allowNa: false, active: true, sort: (q.data?.reduce((m, i) => Math.max(m, i.sort), 0) ?? 0) + 1 } : { text: x.text, allowNa: x.allowNa, active: x.active, sort: x.sort })
+  }
+  const save = useMutation({
+    mutationFn: () => api(edit === 'new' ? '/qualification-questions' : `/qualification-questions/${(edit as QualificationQuestionDTO).id}`, { method: edit === 'new' ? 'POST' : 'PUT', body: form }),
+    onSuccess: () => {
+      void refresh()
+      setEdit(null)
+    },
+  })
+  // Trocar de posição com a vizinha (as duas recebem a ordem uma da outra)
+  const move = useMutation({
+    mutationFn: async ({ a, b }: { a: QualificationQuestionDTO; b: QualificationQuestionDTO }) => {
+      const put = (x: QualificationQuestionDTO, sort: number) => api(`/qualification-questions/${x.id}`, { method: 'PUT', body: { text: x.text, allowNa: x.allowNa, active: x.active, sort } })
+      const [sa, sb] = a.sort === b.sort ? [b.sort + 1, a.sort] : [b.sort, a.sort]
+      await put(a, sa)
+      await put(b, sb)
+    },
+    onSuccess: () => void refresh(),
+  })
+  const list = q.data ?? []
+  return (
+    <Card>
+      <CardHeader
+        title="Formulário de qualificação"
+        description="Perguntas que Suprimentos responde na análise (como o QUALIFOR do UAU). Todas as ativas são obrigatórias para enviar à aprovação; as respostas vão ao UAU em PDF."
+        actions={<Button size="sm" variant="primary" icon={<Plus className="size-4" />} onClick={() => open('new')}>Nova pergunta</Button>}
+      />
+      {q.isError && <Alert tone="error" className="m-4">{errorMessage(q.error)}</Alert>}
+      <ol className="divide-y divide-border-soft">
+        {list.map((x, i) => (
+          <li key={x.id} className="flex items-center gap-3 px-5 py-3">
+            <span className="tabular w-6 text-right text-sm text-text-muted">{i + 1}.</span>
+            <div className="min-w-0 flex-1">
+              <p className="font-medium">
+                {x.text} {!x.active && <Badge tone="warning">Inativa</Badge>}
+              </p>
+              <p className="text-xs text-text-muted">{x.allowNa ? 'Sim · Não · Não se aplica' : 'Sim · Não'}</p>
+            </div>
+            <Button size="sm" variant="ghost" aria-label="Subir" disabled={i === 0 || move.isPending} onClick={() => move.mutate({ a: x, b: list[i - 1]! })}>
+              <ArrowUp className="size-4" />
+            </Button>
+            <Button size="sm" variant="ghost" aria-label="Descer" disabled={i === list.length - 1 || move.isPending} onClick={() => move.mutate({ a: x, b: list[i + 1]! })}>
+              <ArrowDown className="size-4" />
+            </Button>
+            <Button size="sm" variant="ghost" aria-label={`Editar ${x.text}`} onClick={() => open(x)}>
+              <Pencil className="size-4" />
+            </Button>
+          </li>
+        ))}
+      </ol>
+      {edit && (
+        <Dialog open onClose={() => setEdit(null)} title={edit === 'new' ? 'Nova pergunta' : 'Editar pergunta'} footer={<Button variant="primary" loading={save.isPending} disabled={form.text.trim().length < 3} onClick={() => save.mutate()}>Salvar</Button>}>
+          <div className="space-y-3">
+            <Field label="Pergunta" required hint="Respostas já dadas guardam o texto da época; a mudança vale para as próximas.">
+              <Textarea value={form.text} onChange={(e) => setForm({ ...form, text: e.target.value })} rows={3} />
+            </Field>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" className="accent-primary" checked={form.allowNa} onChange={(e) => setForm({ ...form, allowNa: e.target.checked })} /> Permitir “Não se aplica”
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" className="accent-primary" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} /> Ativa (aparece nas novas análises)
             </label>
             {save.isError && <Alert tone="error">{errorMessage(save.error)}</Alert>}
           </div>
@@ -290,6 +368,7 @@ const TABS: { key: Tab; label: string; permission: Permission }[] = [
   { key: 'users', label: 'Usuários', permission: PERMISSIONS.usersManage },
   { key: 'roles', label: 'Cargos e permissões', permission: PERMISSIONS.usersManage },
   { key: 'types', label: 'Tipos de documento', permission: PERMISSIONS.settingsManage },
+  { key: 'qualification', label: 'Formulário de qualificação', permission: PERMISSIONS.settingsManage },
   { key: 'criteria', label: 'Critérios de avaliação', permission: PERMISSIONS.settingsManage },
   { key: 'risk', label: 'Regras de risco', permission: PERMISSIONS.settingsManage },
   { key: 'diag', label: 'Diagnóstico', permission: PERMISSIONS.devPanel },
@@ -308,6 +387,7 @@ export default function DevPanelPage() {
         {tab === 'users' && <UsersManager />}
         {tab === 'roles' && <RolesManager />}
         {tab === 'types' && <DocumentTypes />}
+        {tab === 'qualification' && <QualificationQuestions />}
         {tab === 'criteria' && <Criteria />}
         {tab === 'risk' && <RiskRules />}
         {tab === 'diag' && <Diagnostics />}

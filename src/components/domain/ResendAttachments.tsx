@@ -9,7 +9,11 @@ import { useAuth } from '@/lib/auth'
 
 /** Documentos aprovados que ainda não chegaram ao UAU (falha na gravação, por exemplo). */
 export function pendingUauAttachments(d: RequestDetailDTO) {
-  return d.documents.filter((doc) => doc.reviewStatus === 'aprovado' && !doc.replaced && !doc.uauAttachedAt)
+  const docs = d.documents.filter((doc) => doc.reviewStatus === 'aprovado' && !doc.replaced && !doc.uauAttachedAt)
+  const items = docs.map((doc) => ({ id: doc.id, label: `${doc.documentTypeName} · ${doc.fileName}` }))
+  // O formulário de qualificação vai como PDF junto com os documentos
+  if (d.qualification.complete && !d.qualification.uauAttachedAt) items.push({ id: 'qualificacao', label: 'Formulário de qualificação (PDF)' })
+  return items
 }
 
 /**
@@ -42,10 +46,8 @@ export function ResendAttachments({ detail, onDone }: { detail: RequestDetailDTO
         }
       >
         <ul className="list-disc pl-4">
-          {pending.map((doc) => (
-            <li key={doc.id}>
-              {doc.documentTypeName} · {doc.fileName}
-            </li>
+          {pending.map((item) => (
+            <li key={item.id}>{item.label}</li>
           ))}
         </ul>
       </Alert>

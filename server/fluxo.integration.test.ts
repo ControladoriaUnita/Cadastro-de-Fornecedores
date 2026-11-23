@@ -15,6 +15,7 @@ import { defaultRuleConfigs } from '../shared/domain/risk'
 import * as approval from './application/use-cases/approval'
 import * as dashboard from './application/use-cases/dashboard'
 import * as portal from './application/use-cases/portal'
+import * as qualificationUC from './application/use-cases/qualification'
 import * as requests from './application/use-cases/requests'
 import * as suppliersUC from './application/use-cases/suppliers'
 import { loadActor } from './infrastructure/auth'
@@ -112,6 +113,11 @@ let requestId = ''
 const staff = async (u: { id: string }) =>
   ({ db, uau, mailer, storage, company, sanctions, ctx: { correlationId: 'teste', actor: await loadActor(db, u.id), now: () => new Date() } }) as any
 const supplierPortal = () => ({ db, uau, mailer, storage, company, sanctions, now: () => new Date() }) as any
+/** Responde todas as perguntas ativas (Sim; "Não se aplica" onde existir, para variar). */
+async function answerAll(deps: any, id: string) {
+  const d = await requests.getRequest(deps, id)
+  await qualificationUC.saveQualification(deps, id, { answers: d.qualification.items.map((i: any) => ({ questionId: i.questionId, answer: i.allowNa ? 'na' : 'sim' })) })
+}
 const sentTo = (email: string, subject: RegExp) => mails.some((m) => m.to.includes(email) && subject.test(m.subject))
 
 beforeAll(async () => {
@@ -218,7 +224,24 @@ describe('fluxo de cadastro (banco em memória)', () => {
       await requests.reviewDocument(asAnalyst, requestId, doc.id, { status: 'aprovado', note: null, issuedAt: null, expiresAt: doc.documentTypeId === tCnd.id ? isoIn(365) : null })
     }
     await suppliersUC.runRiskCheck(asAnalyst, d.supplier.id, requestId)
+
+    // formulário de qualificação: 8 perguntas da migração, todas obrigatórias
+    expect(d.qualification.total).toBe(8)
+    await expect(requests.sendToApproval(asAnalyst, requestId)).rejects.toMatchObject({ details: { blockers: expect.arrayContaining([expect.stringContaining('qualificação (8 pergunta')]) } })
+    const noNa = d.qualification.items.find((i: any) => !i.allowNa)!
+    await expect(qualificationUC.saveQualification(asAnalyst, requestId, { answers: [{ questionId: noNa.questionId, answer: 'na' }] })).rejects.toMatchObject({ code: 'INVALID_ANSWER' })
+    await expect(qualificationUC.saveQualification(await staff(users.obra), requestId, { answers: [{ questionId: noNa.questionId, answer: 'sim' }] })).rejects.toMatchObject({ status: 403 })
+    await qualificationUC.saveQualification(asAnalyst, requestId, { answers: [{ questionId: noNa.questionId, answer: 'nao' }] })
+    const partial = await requests.getRequest(asAnalyst, requestId)
+    expect([partial.qualification.answered, partial.qualification.complete]).toEqual([1, false])
+    await answerAll(asAnalyst, requestId)
+    const full = await requests.getRequest(asAnalyst, requestId)
+    expect([full.qualification.answered, full.qualification.complete]).toEqual([8, true])
+    expect(full.events.some((e) => e.kind === 'qualification')).toBe(true)
+
     await requests.sendToApproval(asAnalyst, requestId)
+    // na aprovação o formulário fica travado
+    await expect(qualificationUC.saveQualification(asAnalyst, requestId, { answers: [{ questionId: noNa.questionId, answer: 'sim' }] })).rejects.toMatchObject({ code: 'QUALIFICATION_LOCKED' })
     uauCalls.length = 0
     mails.length = 0
     await approval.approveRequest(await staff(users.aprovador), requestId)
@@ -229,7 +252,10 @@ describe('fluxo de cadastro (banco em memória)', () => {
     expect(save.infopesendereco_cobranca).toMatchObject({ Tipo_pend: 1, NumEnd_pend: '', Endereco_pend: 'Praça Cívica', CEP_pend: '74003010' })
     const attach = uauCalls.find((c) => c.route.endsWith('AnexarArquivosBase64Request'))?.body
     expect(attach.empresa).toBe(1)
-    expect(attach.lista_arquivos.map((f: any) => f.NomeArquivo)).toEqual(expect.arrayContaining(['Cartao CNPJ', 'Certidao Federal']))
+    expect(attach.lista_arquivos.map((f: any) => f.NomeArquivo)).toEqual(expect.arrayContaining(['Cartao CNPJ', 'Certidao Federal', 'Formulario de qualificacao - solicitacao 1']))
+    const form = attach.lista_arquivos.find((f: any) => f.NomeArquivo.startsWith('Formulario'))
+    expect(Buffer.from(form.ConteudoArquivo, 'base64').subarray(0, 5).toString()).toBe('%PDF-')
+    expect((await requests.getRequest(asAnalyst, requestId)).qualification.uauAttachedAt).not.toBeNull()
 
     const done = await requests.getRequest(asAnalyst, requestId)
     expect(done.status).toBe('gravado_uau')
@@ -285,6 +311,7 @@ describe('fluxo de cadastro (banco em memória)', () => {
       await requests.reviewDocument(asAnalyst, r.id, doc.id, { status: 'aprovado', note: null, issuedAt: null, expiresAt: doc.documentTypeId === tCnd.id ? isoIn(365) : null })
     }
     await suppliersUC.runRiskCheck(asAnalyst, d.supplier.id, r.id)
+    await answerAll(asAnalyst, r.id)
     await requests.sendToApproval(asAnalyst, r.id)
 
     // aprovação: pessoa criada, mas o UAU recusa os anexos → gravado com aviso
@@ -306,8 +333,10 @@ describe('fluxo de cadastro (banco em memória)', () => {
     const resent = await approval.resendAttachments(asApprover, r.id)
     expect(resent.documents.every((x) => !!x.uauAttachedAt)).toBe(true)
     const body = uauCalls.find((c) => c.route.endsWith('AnexarArquivosBase64Request'))?.body
-    expect(body.lista_arquivos).toHaveLength(2)
+    // 2 documentos + o PDF do formulário de qualificação
+    expect(body.lista_arquivos).toHaveLength(3)
     expect(body.lista_arquivos[0].Identificador).toBe('Pessoas 9999')
+    expect(resent.qualification.uauAttachedAt).not.toBeNull()
     expect(resent.events.some((e) => e.kind === 'uau_attach')).toBe(true)
 
     // sem pendentes: não reenvia de novo

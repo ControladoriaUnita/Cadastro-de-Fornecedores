@@ -25,6 +25,7 @@ import { randomToken, sha256 } from '../../infrastructure/security'
 import { AppError, can, notFound, requirePermission } from '../context'
 import { toEvent, toSupplierDetail } from '../mappers'
 import { appUrl, notifyAddresses, notifyPermission, notifyRequester } from '../notifications'
+import { loadQualification } from './qualification'
 import type { UseCaseDeps } from '../ports'
 import { loadDocuments, loadModel, recordEvent, saveDocument } from '../shared'
 import { loadRiskChecks } from './suppliers'
@@ -131,7 +132,7 @@ async function loadInvite(deps: UseCaseDeps, requestId: string, now: Date): Prom
 export async function getRequest(deps: UseCaseDeps, id: string): Promise<RequestDetailDTO> {
   const r = await loadRow(deps, id)
   const now = deps.ctx.now()
-  const [[s], model, docs, risk, invite, events, [requester]] = await Promise.all([
+  const [[s], model, docs, risk, invite, events, [requester], qualification] = await Promise.all([
     deps.db.select({ s: suppliers, modelName: supplierModels.name }).from(suppliers).leftJoin(supplierModels, eq(supplierModels.id, suppliers.modelId)).where(eq(suppliers.id, r.supplierId)),
     r.modelId ? loadModel(deps.db, r.modelId) : Promise.resolve(null),
     loadDocuments(deps.db, r.supplierId),
@@ -139,6 +140,7 @@ export async function getRequest(deps: UseCaseDeps, id: string): Promise<Request
     loadInvite(deps, r.id, now),
     deps.db.select().from(requestEvents).where(eq(requestEvents.requestId, r.id)).orderBy(desc(requestEvents.at)),
     deps.db.select({ id: users.id, fullName: users.fullName }).from(users).where(eq(users.id, r.requesterId)),
+    loadQualification(deps.db, r),
   ])
   return {
     id: r.id,
@@ -157,6 +159,7 @@ export async function getRequest(deps: UseCaseDeps, id: string): Promise<Request
     uauResult: r.uauResult ?? null,
     supplier: toSupplierDetail(s!.s, s!.modelName),
     model,
+    qualification,
     documents: docs,
     checklist: documentChecklist(model?.requirements ?? [], docs, now),
     latestRisk: risk[0] ?? null,
@@ -322,6 +325,10 @@ export function approvalBlockers(detail: RequestDetailDTO): string[] {
   if (c.expired.length) blockers.push(`Documentos vencidos: ${names(c.expired)}.`)
   const profile = supplierProfileSchema.safeParse(detail.supplier.profile)
   if (!profile.success) blockers.push('Ficha cadastral do fornecedor incompleta ou inválida.')
+  if (!detail.qualification.complete) {
+    const missing = detail.qualification.total - detail.qualification.answered
+    blockers.push(detail.qualification.total ? `Responda o formulário de qualificação (${missing} pergunta(s) sem resposta).` : 'Cadastre as perguntas do formulário de qualificação no Painel dev.')
+  }
   if (!detail.latestRisk) blockers.push('Rode a análise de risco.')
   else if (detail.latestRisk.blocked) blockers.push('A análise de risco tem item que bloqueia a homologação.')
   else if (detail.supplierSubmittedAt && detail.latestRisk.ranAt < detail.supplierSubmittedAt) blockers.push('Rode a análise de risco de novo (o fornecedor enviou dados depois da última).')
