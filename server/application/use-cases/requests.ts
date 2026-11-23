@@ -12,9 +12,11 @@ import type {
   RequestDetailDTO,
   reviewDocumentSchema,
 } from '../../../shared/contracts'
+import { MODULE_INFO, moduleOfKind, type Module } from '../../../shared/domain/modules'
 import { formatDocument, personKindOf } from '../../../shared/domain/document-number'
 import { documentChecklist } from '../../../shared/domain/documents'
-import { CLOSED_STATUSES, STATUS_LABELS, type RequestStatus, type Urgency } from '../../../shared/domain/request/status'
+import { CLOSED_STATUSES, type RequestStatus, type Urgency } from '../../../shared/domain/request/status'
+import { statusLabel, terms } from '../../../shared/domain/terms'
 import { availableActions, transition, type RequestAction } from '../../../shared/domain/request/workflow'
 import type { RiskLevel } from '../../../shared/domain/risk'
 import { PERMISSIONS } from '../../../shared/domain/roles'
@@ -22,7 +24,7 @@ import { supplierProfileSchema } from '../../../shared/domain/supplier'
 import { schema } from '../../infrastructure/db/client'
 import { inviteEmail } from '../../infrastructure/email/templates'
 import { randomToken, sha256 } from '../../infrastructure/security'
-import { AppError, can, notFound, requirePermission } from '../context'
+import { AppError, can, canModule, notFound, requireModule, requirePermission } from '../context'
 import { toEvent, toSupplierDetail } from '../mappers'
 import { appUrl, notifyAddresses, notifyPermission, notifyRequester } from '../notifications'
 import { loadQualification } from './qualification'
@@ -38,11 +40,13 @@ export const INVITE_DAYS = 15
 type RequestRow = typeof requests.$inferSelect
 
 async function loadRow(deps: UseCaseDeps, id: string): Promise<RequestRow> {
-  const [r] = await deps.db.select().from(requests).where(eq(requests.id, id))
-  if (!r) throw notFound('Solicitação')
+  const [row] = await deps.db.select({ r: requests, kind: suppliers.personKind }).from(requests).innerJoin(suppliers, eq(suppliers.id, requests.supplierId)).where(eq(requests.id, id))
+  if (!row) throw notFound('Solicitação')
   const actor = deps.ctx.actor
-  if (!can(actor, PERMISSIONS.requestReadAll) && r.requesterId !== actor.id) throw notFound('Solicitação')
-  return r
+  if (!can(actor, PERMISSIONS.requestReadAll) && row.r.requesterId !== actor.id) throw notFound('Solicitação')
+  // Gestões separadas: quem não tem o módulo (PJ/PF) não enxerga a solicitação
+  if (!canModule(actor, moduleOfKind(row.kind))) throw notFound('Solicitação')
+  return row.r
 }
 
 /** Aplica a transição, grava a nova situação e o histórico. */
@@ -68,8 +72,9 @@ async function move(deps: UseCaseDeps, r: RequestRow, action: RequestAction, opt
 
 // ----------------------------------------------------------------------------- kanban / lista
 
-export async function listRequests(deps: UseCaseDeps, scope: 'mine' | 'all'): Promise<RequestCardDTO[]> {
+export async function listRequests(deps: UseCaseDeps, scope: 'mine' | 'all', module: Module = 'pj'): Promise<RequestCardDTO[]> {
   requirePermission(deps.ctx.actor, PERMISSIONS.requestReadOwn, PERMISSIONS.requestReadAll)
+  requireModule(deps.ctx.actor, module)
   const all = scope === 'all' && can(deps.ctx.actor, PERMISSIONS.requestReadAll)
   const rows = await deps.db
     .select({ r: requests, s: suppliers, modelName: supplierModels.name, requester: users.fullName })
@@ -77,7 +82,7 @@ export async function listRequests(deps: UseCaseDeps, scope: 'mine' | 'all'): Pr
     .innerJoin(suppliers, eq(suppliers.id, requests.supplierId))
     .leftJoin(supplierModels, eq(supplierModels.id, requests.modelId))
     .innerJoin(users, eq(users.id, requests.requesterId))
-    .where(all ? undefined : eq(requests.requesterId, deps.ctx.actor.id))
+    .where(and(eq(suppliers.personKind, MODULE_INFO[module].personKind), all ? undefined : eq(requests.requesterId, deps.ctx.actor.id)))
     .orderBy(desc(requests.updatedAt))
     .limit(500)
   if (!rows.length) return []
@@ -101,6 +106,7 @@ export async function listRequests(deps: UseCaseDeps, scope: 'mine' | 'all'): Pr
       number: r.number,
       status: r.status as RequestStatus,
       urgency: r.urgency as Urgency,
+      module: moduleOfKind(s.personKind),
       supplierId: s.id,
       supplierName: s.tradeName || s.legalName,
       document: s.document,
@@ -146,6 +152,7 @@ export async function getRequest(deps: UseCaseDeps, id: string): Promise<Request
   return {
     id: r.id,
     number: r.number,
+    module: moduleOfKind(s!.s.personKind),
     status: r.status as RequestStatus,
     urgency: r.urgency as Urgency,
     workName: r.workName,
@@ -175,7 +182,7 @@ export async function getRequest(deps: UseCaseDeps, id: string): Promise<Request
 /** Modelo ativo e compatível com CPF/CNPJ. */
 async function activeModelFor(deps: UseCaseDeps, modelId: string, kind: 'PJ' | 'PF') {
   const [model] = await deps.db.select().from(supplierModels).where(eq(supplierModels.id, modelId))
-  if (!model || !model.active) throw notFound('Modelo de fornecedor')
+  if (!model || !model.active) throw notFound(`Modelo de ${terms(moduleOfKind(kind)).person}`)
   if (model.personKind !== 'ambos' && model.personKind !== kind) {
     throw new AppError('MODEL_KIND', `O modelo "${model.name}" é para ${model.personKind === 'PJ' ? 'CNPJ' : 'CPF'}.`, 422)
   }
@@ -185,9 +192,15 @@ async function activeModelFor(deps: UseCaseDeps, modelId: string, kind: 'PJ' | '
 export async function createRequest(deps: UseCaseDeps, input: CreateRequestInput): Promise<{ id: string; number: number }> {
   requirePermission(deps.ctx.actor, PERMISSIONS.requestCreate)
   const kind = personKindOf(input.document)!
+  const module: Module = input.module ?? 'pj'
+  // Cada módulo aceita só o seu documento: Fornecedores/PJ = CNPJ, Pessoas Físicas/PF = CPF
+  if (MODULE_INFO[module].personKind !== kind) {
+    throw new AppError('WRONG_MODULE', module === 'pj' ? 'CPF é de pessoa física: use o módulo Pessoas Físicas/PF.' : 'CNPJ é de empresa: use o módulo Fornecedores/PJ.', 422)
+  }
+  requireModule(deps.ctx.actor, module)
   // Pré-cadastro (Obra) vem sem modelo: Suprimentos escolhe na triagem, antes de enviar o formulário
   const model = input.modelId ? await activeModelFor(deps, input.modelId, kind) : null
-  if (input.sendInvite && !model) throw new AppError('MODEL_REQUIRED', 'Escolha o modelo de fornecedor para já enviar o formulário.', 422)
+  if (input.sendInvite && !model) throw new AppError('MODEL_REQUIRED', `Escolha o modelo de ${terms(module).person} para já enviar o formulário.`, 422)
 
   let [supplier] = await deps.db.select().from(suppliers).where(eq(suppliers.document, input.document))
   if (supplier) {
@@ -195,7 +208,7 @@ export async function createRequest(deps: UseCaseDeps, input: CreateRequestInput
       .select({ number: requests.number })
       .from(requests)
       .where(and(eq(requests.supplierId, supplier.id), inArray(requests.status, ['solicitado', 'aguardando_fornecedor', 'em_analise', 'pendencias', 'aguardando_aprovacao'])))
-    if (open) throw new AppError('OPEN_REQUEST', `Este fornecedor já tem a solicitação nº ${open.number} em andamento.`, 409)
+    if (open) throw new AppError('OPEN_REQUEST', `${module === 'pf' ? 'Esta pessoa' : 'Este fornecedor'} já tem a solicitação nº ${open.number} em andamento.`, 409)
     await deps.db.update(suppliers).set({ ...(model ? { modelId: model.id } : {}), email: input.contactEmail, updatedAt: deps.ctx.now() }).where(eq(suppliers.id, supplier.id))
   } else {
     let company = null
@@ -238,7 +251,7 @@ export async function createRequest(deps: UseCaseDeps, input: CreateRequestInput
       lines: [`${deps.ctx.actor.fullName} pediu o cadastro de ${supplier!.legalName} (${formatDocument(supplier!.document)}).`],
       path: `/solicitacoes/${r!.id}`,
       requestId: r!.id,
-    })
+    }, module)
   }
   return { id: r!.id, number: r!.number }
 }
@@ -251,9 +264,10 @@ async function issueInvite(deps: UseCaseDeps, r: RequestRow, email: string, pend
   const token = randomToken()
   const expiresAt = new Date(now.getTime() + INVITE_DAYS * 86_400_000)
   await deps.db.insert(invites).values({ requestId: r.id, email, tokenHash: sha256(token), expiresAt })
-  const [s] = await deps.db.select({ name: suppliers.legalName }).from(suppliers).where(eq(suppliers.id, r.supplierId))
+  const [s] = await deps.db.select({ name: suppliers.legalName, kind: suppliers.personKind }).from(suppliers).where(eq(suppliers.id, r.supplierId))
   const link = `${appUrl()}/portal/${token}`
-  const mail = inviteEmail({ supplierName: s?.name ?? 'sua empresa', link, expiresAt, pending, message })
+  const module = moduleOfKind(s?.kind ?? 'PJ')
+  const mail = inviteEmail({ supplierName: s?.name ?? (module === 'pf' ? 'você' : 'sua empresa'), link, expiresAt, pending, message, module })
   await deps.mailer.send({ ...mail, to: [email], requestId: r.id })
   return { email, expiresAt }
 }
@@ -269,7 +283,7 @@ export async function inviteSupplier(deps: UseCaseDeps, id: string, input: z.inf
     const [s] = await deps.db.select({ document: suppliers.document }).from(suppliers).where(eq(suppliers.id, r.supplierId))
     modelId = (await activeModelFor(deps, input.modelId, personKindOf(s!.document)!)).id
   }
-  if (!modelId) throw new AppError('MODEL_REQUIRED', 'Escolha o modelo de fornecedor antes de enviar o formulário.', 422)
+  if (!modelId) throw new AppError('MODEL_REQUIRED', `Escolha o modelo de ${terms(deps.ctx.module).person} antes de enviar o formulário.`, 422)
   await move(deps, r, 'invite', { payload: { email, modelId }, extra: { contactEmail: email, analystId: r.analystId ?? deps.ctx.actor.id, modelId } })
   if (modelId !== r.modelId) await deps.db.update(suppliers).set({ modelId, updatedAt: deps.ctx.now() }).where(eq(suppliers.id, r.supplierId))
   await issueInvite(deps, r, email, null, input.message ?? null)
@@ -293,7 +307,7 @@ export async function cancelRequest(deps: UseCaseDeps, id: string, comment: stri
     deps.db,
     deps.mailer,
     r.requesterId,
-    { title: `Solicitação nº ${r.number} cancelada`, lines: [`Cancelada por ${deps.ctx.actor.fullName}.`, ...(comment ? [`Motivo: ${comment}`] : [])], path: `/solicitacoes/${id}`, requestId: id },
+    { title: `Solicitação nº ${r.number} cancelada`, lines: [`Cancelada por ${deps.ctx.actor.fullName}.`, ...(comment ? [`Motivo: ${comment}`] : [])], path: `/solicitacoes/${id}`, requestId: id, module: deps.ctx.module },
     deps.ctx.actor.id,
   )
   return getRequest(deps, id)
@@ -309,6 +323,7 @@ export async function rejectRequest(deps: UseCaseDeps, id: string, comment: stri
     lines: [`Motivo: ${comment}`],
     path: `/solicitacoes/${id}`,
     requestId: id,
+    module: deps.ctx.module,
   })
   return getRequest(deps, id)
 }
@@ -317,7 +332,8 @@ export async function rejectRequest(deps: UseCaseDeps, id: string, comment: stri
 export function approvalBlockers(detail: RequestDetailDTO): string[] {
   const blockers: string[] = []
   const c = detail.checklist
-  if (!detail.model) return ['Defina o modelo de fornecedor.']
+  const t = terms(detail.module)
+  if (!detail.model) return [`Defina o modelo de ${t.person}.`]
   const model = detail.model
   const names = (ids: string[]) => ids.map((id) => model.requirements.find((q) => q.documentTypeId === id)?.name ?? id).join(', ')
   if (c.missing.length) blockers.push(`Documentos obrigatórios faltando: ${names(c.missing)}.`)
@@ -325,7 +341,9 @@ export function approvalBlockers(detail: RequestDetailDTO): string[] {
   if (c.rejected.length) blockers.push(`Documentos reprovados: ${names(c.rejected)}.`)
   if (c.expired.length) blockers.push(`Documentos vencidos: ${names(c.expired)}.`)
   const profile = supplierProfileSchema.safeParse(detail.supplier.profile)
-  if (!profile.success) blockers.push('Ficha cadastral do fornecedor incompleta ou inválida.')
+  if (!profile.success) blockers.push(`Ficha cadastral ${t.ofPerson} incompleta ou inválida.`)
+  // Pessoas Físicas/PF: sem homologação (formulário de qualificação) e sem análise de risco
+  if (detail.module === 'pf') return blockers
   if (!detail.qualification.complete) {
     const missing = detail.qualification.total - detail.qualification.answered
     blockers.push(detail.qualification.total ? `Responda o formulário de qualificação (${missing} pergunta(s) sem resposta).` : 'Cadastre as perguntas do formulário de qualificação no Painel dev.')
@@ -344,10 +362,10 @@ export async function sendToApproval(deps: UseCaseDeps, id: string) {
   await move(deps, r, 'send_to_approval')
   await notifyPermission(deps.db, deps.mailer, PERMISSIONS.requestApprove, {
     title: `Solicitação nº ${r.number} aguardando aprovação`,
-    lines: [`${detail.supplier.legalName} (${formatDocument(detail.supplier.document)}) está pronto para homologar e gravar no UAU.`],
+    lines: [`${detail.supplier.legalName} (${formatDocument(detail.supplier.document)}) está pronto para ${detail.module === 'pf' ? 'aprovar' : 'homologar'} e gravar no UAU.`],
     path: `/validacao/${id}`,
     requestId: id,
-  })
+  }, detail.module)
   return getRequest(deps, id)
 }
 
@@ -361,7 +379,7 @@ export async function reviewDocument(deps: UseCaseDeps, requestId: string, docum
   requirePermission(deps.ctx.actor, PERMISSIONS.requestAnalyze)
   const r = await loadRow(deps, requestId)
   if (!['em_analise', 'pendencias', 'aguardando_fornecedor'].includes(r.status)) {
-    throw new AppError('INVALID_TRANSITION', `Documentos não podem ser conferidos na etapa "${STATUS_LABELS[r.status as RequestStatus]}".`, 409)
+    throw new AppError('INVALID_TRANSITION', `Documentos não podem ser conferidos na etapa "${statusLabel(r.status as RequestStatus, deps.ctx.module)}".`, 409)
   }
   if (input.status === 'reprovado' && !input.note?.trim()) throw new AppError('COMMENT_REQUIRED', 'Informe o motivo da reprovação.', 422)
   const now = deps.ctx.now()
@@ -393,7 +411,7 @@ export async function staffUpload(deps: UseCaseDeps, requestId: string, form: { 
   requirePermission(deps.ctx.actor, PERMISSIONS.requestAnalyze)
   const r = await loadRow(deps, requestId)
   if (CLOSED_STATUSES.includes(r.status as RequestStatus)) throw new AppError('CLOSED', 'Solicitação encerrada.', 409)
-  if (!r.modelId) throw new AppError('MODEL_REQUIRED', 'Defina o modelo de fornecedor antes de anexar documentos.', 422)
+  if (!r.modelId) throw new AppError('MODEL_REQUIRED', `Defina o modelo de ${terms(deps.ctx.module).person} antes de anexar documentos.`, 422)
   const model = await loadModel(deps.db, r.modelId)
   const doc = await saveDocument(
     deps.db,

@@ -21,6 +21,7 @@ import type {
   uauSyncSchema,
 } from '../../../shared/contracts'
 import { personKindOf } from '../../../shared/domain/document-number'
+import { MODULE_INFO, moduleOfKind, type Module } from '../../../shared/domain/modules'
 import { UAU_ROUTES } from '../../../shared/domain/uau-payload'
 import { selectUauSuppliers, UAU_SYNC_MAX_CODE, UAU_SYNC_RANGE, UAU_SYNC_STOP_AFTER_EMPTY } from '../../../shared/domain/uau-suppliers'
 import { documentChecklist, expiryState } from '../../../shared/domain/documents'
@@ -30,7 +31,7 @@ import { evaluateRisk, type RiskFacts, type RiskLevel } from '../../../shared/do
 import { PERMISSIONS } from '../../../shared/domain/roles'
 import type { SupplierStatus } from '../../../shared/domain/supplier'
 import { schema } from '../../infrastructure/db/client'
-import { AppError, can, IntegrationError, notFound, requirePermission } from '../context'
+import { AppError, can, IntegrationError, notFound, requireModule, requirePermission } from '../context'
 import { toRiskCheck, toSupplierDetail } from '../mappers'
 import type { UseCaseDeps } from '../ports'
 import { loadDocuments, loadModel, notFromDroppedRequest, userNames } from '../shared'
@@ -47,6 +48,7 @@ export async function lookupDocument(deps: UseCaseDeps, document: string): Promi
   requirePermission(deps.ctx.actor, PERMISSIONS.requestCreate, PERMISSIONS.supplierManage)
   const kind = personKindOf(document)
   if (!kind) throw new AppError('INVALID_DOCUMENT', 'CNPJ ou CPF inválido.', 422)
+  requireModule(deps.ctx.actor, moduleOfKind(kind))
 
   const companyP: Promise<{ company: CompanyDTO | null; error: string | null }> =
     kind === 'PJ'
@@ -76,8 +78,9 @@ export async function lookupDocument(deps: UseCaseDeps, document: string): Promi
 
 // ----------------------------------------------------------------------------- lista e ficha
 
-export async function listSuppliers(deps: UseCaseDeps): Promise<SupplierListItemDTO[]> {
+export async function listSuppliers(deps: UseCaseDeps, module: Module = 'pj'): Promise<SupplierListItemDTO[]> {
   requirePermission(deps.ctx.actor, PERMISSIONS.supplierRead)
+  requireModule(deps.ctx.actor, module)
   const today = deps.ctx.now()
   const rows = await deps.db
     // Só as colunas da lista: a base importada do UAU tem milhares de linhas (sem ficha/Receita).
@@ -98,6 +101,7 @@ export async function listSuppliers(deps: UseCaseDeps): Promise<SupplierListItem
     })
     .from(suppliers)
     .leftJoin(supplierModels, eq(supplierModels.id, suppliers.modelId))
+    .where(eq(suppliers.personKind, MODULE_INFO[module].personKind))
     .orderBy(suppliers.legalName)
 
   const evals = await deps.db
@@ -185,6 +189,7 @@ export async function getSupplier(deps: UseCaseDeps, id: string): Promise<Suppli
     .leftJoin(supplierModels, eq(supplierModels.id, suppliers.modelId))
     .where(eq(suppliers.id, id))
   if (!row) throw notFound('Fornecedor')
+  requireModule(deps.ctx.actor, moduleOfKind(row.s.personKind))
   const [docs, risk, evals, criteria, reqs] = await Promise.all([
     loadDocuments(deps.db, id),
     loadRiskChecks(deps, id),
@@ -228,8 +233,16 @@ async function uauPendingFor(deps: UseCaseDeps, supplierId: string, docs: Docume
   }
 }
 
+/** Gestões separadas: confere se o usuário tem o módulo (PJ/PF) do cadastro. */
+export async function requireSupplierModule(deps: UseCaseDeps, supplierId: string) {
+  const [s] = await deps.db.select({ kind: suppliers.personKind }).from(suppliers).where(eq(suppliers.id, supplierId))
+  if (!s) throw notFound('Fornecedor')
+  requireModule(deps.ctx.actor, moduleOfKind(s.kind))
+}
+
 export async function updateSupplier(deps: UseCaseDeps, id: string, input: z.infer<typeof supplierUpdateSchema>) {
   requirePermission(deps.ctx.actor, PERMISSIONS.supplierManage)
+  await requireSupplierModule(deps, id)
   const [row] = await deps.db
     .update(suppliers)
     .set({ ...input, updatedAt: deps.ctx.now() })
@@ -260,6 +273,8 @@ export async function runRiskCheck(deps: UseCaseDeps, supplierId: string, reques
   requirePermission(deps.ctx.actor, PERMISSIONS.supplierManage, PERMISSIONS.requestAnalyze)
   const [s] = await deps.db.select().from(suppliers).where(eq(suppliers.id, supplierId))
   if (!s) throw notFound('Fornecedor')
+  requireModule(deps.ctx.actor, moduleOfKind(s.personKind))
+  if (s.personKind === 'PF') throw new AppError('NO_RISK_PF', 'Pessoas físicas não têm análise de risco.', 422)
   const now = deps.ctx.now()
   const sources: Record<string, unknown> = {}
 
@@ -322,6 +337,7 @@ export async function runRiskCheck(deps: UseCaseDeps, supplierId: string, reques
 
 export async function importFromUau(deps: UseCaseDeps, list: string[]): Promise<ImportResultDTO> {
   requirePermission(deps.ctx.actor, PERMISSIONS.supplierManage)
+  requireModule(deps.ctx.actor, 'pj')
   const unique = [...new Set(list)]
   const existing = new Map(
     (await deps.db.select({ id: suppliers.id, document: suppliers.document }).from(suppliers).where(inArray(suppliers.document, unique))).map((r) => [
@@ -375,8 +391,12 @@ const SYNC_STEP_MS = 8_000
  */
 export async function syncFromUau(deps: UseCaseDeps, input: z.infer<typeof uauSyncSchema>): Promise<UauSyncDTO> {
   requirePermission(deps.ctx.actor, PERMISSIONS.supplierManage)
+  // Cada módulo importa o seu tipo de pessoa: PJ = jurídicas ativas; PF = físicas ativas
+  const module = deps.ctx.module ?? 'pj'
+  requireModule(deps.ctx.actor, module)
+  const kind = MODULE_INFO[module].personKind
   const started = Date.now()
-  const out: UauSyncDTO = { from: input.from, emptyStreak: input.emptyStreak, done: false, read: 0, created: 0, updated: 0, skipped: { pessoa_fisica: 0, inativa: 0, invalida: 0, duplicada: 0 } }
+  const out: UauSyncDTO = { from: input.from, emptyStreak: input.emptyStreak, done: false, read: 0, created: 0, updated: 0, skipped: { outro_tipo: 0, inativa: 0, invalida: 0, duplicada: 0 } }
 
   while (Date.now() - started < SYNC_STEP_MS) {
     if (out.emptyStreak >= UAU_SYNC_STOP_AFTER_EMPTY || out.from >= UAU_SYNC_MAX_CODE) {
@@ -390,7 +410,7 @@ export async function syncFromUau(deps: UseCaseDeps, input: z.infer<typeof uauSy
     out.read += rows.length
     out.emptyStreak = rows.length ? 0 : out.emptyStreak + UAU_SYNC_RANGE
 
-    const batch = selectUauSuppliers(rows)
+    const batch = selectUauSuppliers(rows, kind)
     for (const k of Object.keys(batch.skipped) as (keyof UauSyncDTO['skipped'])[]) out.skipped[k] += batch.skipped[k]
     if (batch.suppliers.length) {
       const now = deps.ctx.now()
@@ -400,7 +420,7 @@ export async function syncFromUau(deps: UseCaseDeps, input: z.infer<typeof uauSy
         .values(
           batch.suppliers.map((s) => ({
             document: s.document,
-            personKind: 'PJ',
+            personKind: kind,
             legalName: s.legalName,
             tradeName: s.tradeName,
             email: s.email,
@@ -448,7 +468,8 @@ export async function searchEvaluableSuppliers(deps: UseCaseDeps, q: string): Pr
   return deps.db
     .select({ id: suppliers.id, legalName: suppliers.legalName, tradeName: suppliers.tradeName, document: suppliers.document })
     .from(suppliers)
-    .where(and(eq(suppliers.status, 'homologado'), match))
+    // avaliação é só do módulo Fornecedores/PJ
+    .where(and(eq(suppliers.status, 'homologado'), eq(suppliers.personKind, 'PJ'), match))
     .orderBy(suppliers.legalName)
     .limit(20)
 }
@@ -476,8 +497,9 @@ export async function myEvaluations(deps: UseCaseDeps): Promise<MyEvaluationDTO[
 
 export async function createEvaluation(deps: UseCaseDeps, input: z.infer<typeof evaluationSchema>): Promise<EvaluationDTO> {
   requirePermission(deps.ctx.actor, PERMISSIONS.evaluationCreate)
-  const [s] = await deps.db.select({ id: suppliers.id, status: suppliers.status }).from(suppliers).where(eq(suppliers.id, input.supplierId))
+  const [s] = await deps.db.select({ id: suppliers.id, status: suppliers.status, personKind: suppliers.personKind }).from(suppliers).where(eq(suppliers.id, input.supplierId))
   if (!s) throw notFound('Fornecedor')
+  if (s.personKind !== 'PJ') throw new AppError('NO_EVALUATION_PF', 'Pessoas físicas não são avaliadas.', 422)
   // Quem não gere fornecedores (ex.: Obra) só avalia homologados
   if (s.status !== 'homologado' && !can(deps.ctx.actor, PERMISSIONS.supplierManage)) {
     throw new AppError('NOT_HOMOLOGATED', 'Só fornecedores homologados podem ser avaliados.', 422)

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, Pencil, Plus, Trash2 } from 'lucide-react'
 import type { DocumentTypeDTO, ModelDTO } from '@shared/contracts'
+import { MODULE_INFO, type Module } from '@shared/domain/modules'
 import { PERMISSIONS } from '@shared/domain/roles'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Alert, Badge, Button, Card, CardBody, CardHeader, Dialog, EmptyState, Field, Input, Select, Skeleton, Textarea } from '@/components/ui'
@@ -14,11 +15,12 @@ interface Req {
   instructions: string
 }
 
-function ModelEditor({ model, types, onClose }: { model: ModelDTO | null; types: DocumentTypeDTO[]; onClose: () => void }) {
+function ModelEditor({ model, types, onClose, module = 'pj' }: { model: ModelDTO | null; types: DocumentTypeDTO[]; onClose: () => void; module?: Module }) {
   const qc = useQueryClient()
   const [name, setName] = useState(model?.name ?? '')
   const [description, setDescription] = useState(model?.description ?? '')
-  const [personKind, setPersonKind] = useState<ModelDTO['personKind']>(model?.personKind ?? 'PJ')
+  // Modelo novo nasce no módulo da tela (PJ = CNPJ, PF = CPF)
+  const [personKind, setPersonKind] = useState<ModelDTO['personKind']>(model?.personKind ?? MODULE_INFO[module].personKind)
   const [cnae, setCnae] = useState(model?.expectedCnaePrefixes.join(', ') ?? '')
   const [active, setActive] = useState(model?.active ?? true)
   const [reqs, setReqs] = useState<Req[]>(model?.requirements.map((r) => ({ documentTypeId: r.documentTypeId, required: r.required, instructions: r.instructions ?? '' })) ?? [])
@@ -61,7 +63,7 @@ function ModelEditor({ model, types, onClose }: { model: ModelDTO | null; types:
       open
       onClose={onClose}
       width="min(94vw, 48rem)"
-      title={model ? 'Editar modelo' : 'Novo modelo de fornecedor'}
+      title={model ? 'Editar modelo' : module === 'pf' ? 'Novo modelo de pessoa física' : 'Novo modelo de fornecedor'}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} className="mr-auto">
@@ -125,7 +127,7 @@ function ModelEditor({ model, types, onClose }: { model: ModelDTO | null; types:
                 <Input
                   value={r.instructions}
                   onChange={(e) => setReqs((l) => l.map((x, k) => (k === i ? { ...x, instructions: e.target.value } : x)))}
-                  placeholder="Orientação para o fornecedor (opcional)"
+                  placeholder={module === 'pf' ? 'Orientação para a pessoa (opcional)' : 'Orientação para o fornecedor (opcional)'}
                   className="mt-2 h-8"
                 />
               </li>
@@ -153,19 +155,19 @@ function ModelEditor({ model, types, onClose }: { model: ModelDTO | null; types:
   )
 }
 
-export default function ModelsPage() {
+export default function ModelsPage({ module = 'pj' }: { module?: Module }) {
   const { can } = useAuth()
   const edit = can(PERMISSIONS.settingsManage)
   const [editing, setEditing] = useState<ModelDTO | 'new' | null>(null)
-  const models = useQuery({ queryKey: ['models'], queryFn: () => api<ModelDTO[]>('/models') })
-  const types = useQuery({ queryKey: ['document-types'], queryFn: () => api<DocumentTypeDTO[]>('/document-types') })
+  const models = useQuery({ queryKey: ['models', module], queryFn: () => api<ModelDTO[]>(`/models?module=${module}`) })
+  const types = useQuery({ queryKey: ['document-types', module], queryFn: () => api<DocumentTypeDTO[]>('/document-types') })
 
   return (
     <>
       <PageHeader
-        eyebrow="Modelos"
-        title="Modelos de fornecedor"
-        description="Cada modelo define quais documentos o fornecedor envia e o que se espera da atividade dele."
+        eyebrow={module === 'pf' ? `Modelos · ${MODULE_INFO.pf.label}` : 'Modelos'}
+        title={module === 'pf' ? 'Modelos de pessoa física' : 'Modelos de fornecedor'}
+        description={module === 'pf' ? 'Cada modelo define quais documentos a pessoa física envia.' : 'Cada modelo define quais documentos o fornecedor envia e o que se espera da atividade dele.'}
         actions={
           edit && (
             <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setEditing('new')}>
@@ -213,7 +215,7 @@ export default function ModelsPage() {
       ) : (
         <EmptyState title="Nenhum modelo" />
       )}
-      {editing && types.data && <ModelEditor model={editing === 'new' ? null : editing} types={types.data} onClose={() => setEditing(null)} />}
+      {editing && types.data && <ModelEditor module={module} model={editing === 'new' ? null : editing} types={types.data} onClose={() => setEditing(null)} />}
     </>
   )
 }

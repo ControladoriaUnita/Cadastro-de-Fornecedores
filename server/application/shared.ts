@@ -22,7 +22,7 @@ export const notFromDroppedRequest = sql`(${requests.status} is null or ${reques
 
 export async function loadModel(db: Db, modelId: string): Promise<ModelDTO> {
   const [m] = await db.select().from(supplierModels).where(eq(supplierModels.id, modelId))
-  if (!m) throw notFound('Modelo de fornecedor')
+  if (!m) throw notFound('Modelo')
   const reqs = await db
     .select({ req: modelRequirements, type: documentTypes })
     .from(modelRequirements)
@@ -100,7 +100,7 @@ export interface UploadInput {
 /** Valida, guarda o arquivo e registra o documento (substituindo o envio anterior do mesmo tipo). */
 export async function saveDocument(db: Db, storage: FileStorage, input: UploadInput, now: Date) {
   if (input.allowedTypeIds && !input.allowedTypeIds.includes(input.documentTypeId)) {
-    throw new AppError('DOCUMENT_TYPE_NOT_ALLOWED', 'Este documento não faz parte do modelo do fornecedor.', 422)
+    throw new AppError('DOCUMENT_TYPE_NOT_ALLOWED', 'Este documento não faz parte do modelo deste cadastro.', 422)
   }
   const [type] = await db.select().from(documentTypes).where(eq(documentTypes.id, input.documentTypeId))
   if (!type || !type.active) throw notFound('Tipo de documento')

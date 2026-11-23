@@ -19,6 +19,7 @@ import * as qualificationUC from './application/use-cases/qualification'
 import * as requests from './application/use-cases/requests'
 import * as suppliersUC from './application/use-cases/suppliers'
 import * as worksUC from './application/use-cases/works'
+import * as settingsUC from './application/use-cases/settings'
 import { loadActor } from './infrastructure/auth'
 import * as schema from './infrastructure/db/schema'
 
@@ -31,7 +32,7 @@ const DAY = 86_400_000
 const isoIn = (days: number) => new Date(Date.now() + days * DAY).toISOString().slice(0, 10)
 const pdf = (name: string) => new File([Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n')], name, { type: 'application/pdf' })
 
-const mails: { to: string[]; subject: string }[] = []
+const mails: { to: string[]; subject: string; html: string }[] = []
 const uauCalls: { route: string; body: any }[] = []
 const files = new Map<string, Buffer>()
 /** Simula o UAU recusando os anexos (como na primeira gravação real, sem empresa). */
@@ -39,8 +40,8 @@ let failAttach = false
 
 const mailer = {
   provider: 'graph' as const,
-  async send(m: { to: string[]; subject: string }) {
-    mails.push({ to: m.to, subject: m.subject })
+  async send(m: { to: string[]; subject: string; html?: string }) {
+    mails.push({ to: m.to, subject: m.subject, html: m.html ?? '' })
   },
 }
 const storage = {
@@ -54,6 +55,7 @@ const storage = {
   },
 }
 /** UAU com gravação "ligada", mas sem rede: guarda cada chamada para conferir o corpo. */
+let uauPeople: Record<string, any>[] = []
 const uau = {
   writeEnabled: true,
   async checkLogin() {
@@ -64,6 +66,11 @@ const uau = {
     if (route.endsWith('ConsultarDadosPessoaPorCpfCnpjEStatus'))
       return { route, status: 400, ok: false, ms: 1, data: [{ Descricao: 'Não foi encontrado nenhuma pessoa com os dados informados.' }] }
     if (route.endsWith('GravarPessoa')) return { route, status: 200, ok: true, ms: 1, data: [{ cod_pes: 9999 }] }
+    if (route.endsWith('ConsultarPessoasPorCondicao')) {
+      // faixa "cod_pes > N and cod_pes <= M" sobre a base falsa do UAU
+      const [, a, b] = /cod_pes > (\d+) and cod_pes <= (\d+)/.exec((body as any).condicaoConsultarPessoa) ?? []
+      return { route, status: 200, ok: true, ms: 1, data: uauPeople.filter((p) => p.CodigoPessoa > Number(a) && p.CodigoPessoa <= Number(b)) }
+    }
     if (route.endsWith('ListarDiretorios')) return { route, status: 200, ok: true, ms: 1, data: [] }
     if (route.endsWith('AnexarArquivosBase64Request') && failAttach) return { route, status: 400, ok: false, ms: 1, data: { Descricao: 'Não foi possível gravar o arquivo.' } }
     return { route, status: 200, ok: true, ms: 1, data: '' }
@@ -111,8 +118,9 @@ let tCnpj: { id: string }
 let tCnd: { id: string }
 let requestId = ''
 
-const staff = async (u: { id: string }) =>
-  ({ db, uau, mailer, storage, company, sanctions, ctx: { correlationId: 'teste', actor: await loadActor(db, u.id), now: () => new Date() } }) as any
+/** Igual ao router: o usuário entra recortado para o módulo da requisição (os módulos são independentes). */
+const staff = async (u: { id: string }, module: 'pj' | 'pf' = 'pj') =>
+  ({ db, uau, mailer, storage, company, sanctions, ctx: { correlationId: 'teste', actor: await loadActor(db, u.id, module), now: () => new Date(), module } }) as any
 const supplierPortal = () => ({ db, uau, mailer, storage, company, sanctions, now: () => new Date() }) as any
 /** Responde todas as perguntas ativas (Sim; "Não se aplica" onde existir, para variar). */
 async function answerAll(deps: any, id: string) {
@@ -430,5 +438,184 @@ describe('fluxo de cadastro (banco em memória)', () => {
     await expect(requests.createRequest(asObra, { document: '07526557000100', modelId: null, contactEmail: 'w2@t.com', workName: 'Obra Nova Teste', urgency: 'normal', sendInvite: false } as any)).rejects.toMatchObject({ code: 'WORK_NOT_FOUND' })
     // a solicitação antiga continua com o nome da obra desativada
     expect((await requests.getRequest(asObra, r.id)).workName).toBe('Obra Nova Teste')
+  })
+  describe('módulos independentes: Fornecedores/PJ × Pessoas Físicas/PF', () => {
+    const CPF = '52998224725'
+    let gestorPf: { id: string }
+    let pfModel: { id: string }
+    let pfType: { id: string }
+
+    it('cada módulo tem cargos próprios; Dev geral vale nos dois, Dev do módulo só no dele', async () => {
+      const base = await staff(users.analista, 'pf')
+      const asPfAdmin = { ...base, ctx: { ...base.ctx, actor: { ...base.ctx.actor, permissions: ['users.manage'] } } }
+      const roles = await settingsUC.saveRole(asPfAdmin, null, {
+        name: 'Gestão PF',
+        description: null,
+        permissions: ['request.create', 'request.read.own', 'request.read.all', 'request.analyze', 'request.approve', 'supplier.read', 'model.read'],
+      })
+      // a lista do PF só tem cargos do PF (o Dev PF e o novo); os do PJ não aparecem
+      expect(roles.map((r) => [r.key, r.module])).toEqual([
+        ['dev-pf', 'pf'],
+        ['pf-gestao-pf', 'pf'],
+      ])
+      const asPjAdmin = { ...(await staff(users.analista, 'pj')), ctx: { ...(await staff(users.analista, 'pj')).ctx, actor: { ...(await staff(users.analista, 'pj')).ctx.actor, permissions: ['users.manage'] } } }
+      expect((await settingsUC.listRoles(asPjAdmin)).some((r) => r.key === 'pf-gestao-pf')).toBe(false)
+
+      ;[gestorPf] = await db.insert(schema.users).values({ email: 'gestor.pf@t.com', fullName: 'Gestor PF', roles: ['pf-gestao-pf'] }).returning()
+      const pf = (await staff(gestorPf, 'pf')).ctx.actor
+      expect([pf.memberOf, pf.modules, pf.access.pj]).toEqual([['pf'], ['pf'], []])
+      expect((await staff(users.analista, 'pf')).ctx.actor.permissions).toEqual([])
+
+      const [devPf] = await db.insert(schema.users).values({ email: 'dev.pf@t.com', fullName: 'Dev PF', roles: ['dev-pf'] }).returning()
+      const dp = (await staff(devPf, 'pf')).ctx.actor
+      expect([dp.access.pf.length > 10, dp.access.pj, dp.memberOf]).toEqual([true, [], ['pf']])
+      const [devGeral] = await db.insert(schema.users).values({ email: 'dev.geral@t.com', fullName: 'Dev Geral', roles: ['dev'] }).returning()
+      const dg = (await staff(devGeral, 'pj')).ctx.actor
+      expect([dg.globalDev, dg.memberOf, dg.access.pj.length === dg.access.pf.length]).toEqual([true, ['pj', 'pf'], true])
+    })
+
+    it('a mesma pessoa com cargos diferentes em cada módulo: permissão de um não vale no outro', async () => {
+      // Obra no PJ (só abre e acompanha) + Gestão PF (aprova) no PF
+      const [mista] = await db.insert(schema.users).values({ email: 'mista@t.com', fullName: 'Mista', roles: ['obra', 'pf-gestao-pf'] }).returning()
+      const pj = (await staff(mista, 'pj')).ctx.actor
+      const pf = (await staff(mista, 'pf')).ctx.actor
+      expect(pj.permissions).toEqual(['request.create', 'request.read.own', 'evaluation.create'])
+      expect(pf.permissions).toContain('request.approve')
+      expect(pj.permissions).not.toContain('request.approve')
+      await expect(suppliersUC.listSuppliers(await staff(mista, 'pj'), 'pj')).rejects.toMatchObject({ status: 403 })
+    })
+
+    it('usuários e tipos de documento são de cada módulo', async () => {
+      const pfAdmin = { ...(await staff(gestorPf, 'pf')), ctx: { ...(await staff(gestorPf, 'pf')).ctx, actor: { ...(await staff(gestorPf, 'pf')).ctx.actor, permissions: ['users.manage', 'settings.manage', 'model.read'] } } }
+      // pessoa que já é do PJ entra no PF: ganha o cargo do PF e mantém o do PJ
+      await settingsUC.saveUser(pfAdmin, null, { fullName: 'Analista Teste', email: 'analista@t.com', roles: ['pf-gestao-pf'], active: true })
+      const [ana] = await db.select().from(schema.users).where(eq(schema.users.email, 'analista@t.com'))
+      expect(ana.roles.sort()).toEqual(['analista', 'pf-gestao-pf'])
+      // a lista de usuários do PF mostra só os cargos do PF
+      const pfUsers = await settingsUC.listUsers(pfAdmin)
+      expect(pfUsers.find((u) => u.email === 'analista@t.com')?.roles).toEqual(['pf-gestao-pf'])
+      expect(pfUsers.some((u) => u.email === 'obra@t.com')).toBe(false)
+      // cargo do PJ não pode ser dado pelo painel do PF
+      await expect(settingsUC.saveUser(pfAdmin, ana.id, { fullName: 'Analista Teste', email: 'analista@t.com', roles: ['aprovador'], active: true })).rejects.toMatchObject({ code: 'UNKNOWN_ROLE' })
+      // tirar do PF não mexe no PJ
+      await settingsUC.saveUser(pfAdmin, ana.id, { fullName: 'Analista Teste', email: 'analista@t.com', roles: [], active: true })
+      expect((await db.select().from(schema.users).where(eq(schema.users.id, ana.id)))[0].roles).toEqual(['analista'])
+      // o Dev do módulo só é dado por um Dev
+      await expect(settingsUC.saveUser(pfAdmin, null, { fullName: 'X', email: 'x@t.com', roles: ['dev-pf'], active: true })).rejects.toMatchObject({ status: 403 })
+
+      // tipos de documento: cada módulo com a sua lista
+      pfType = (await settingsUC.saveDocumentType(pfAdmin, null, { name: 'RG ou CNH', description: null, hasExpiry: false, active: true, sort: 0 }))!
+      expect((await settingsUC.listDocumentTypes(pfAdmin)).map((t) => t.name)).toEqual(['RG ou CNH'])
+      expect((await settingsUC.listDocumentTypes(await staff(users.analista, 'pj'))).some((t) => t.name === 'RG ou CNH')).toBe(false)
+      // modelo do PF só aceita tipo do PF e pessoa física
+      await expect(settingsUC.saveModel(pfAdmin, null, { name: 'Errado', description: null, personKind: 'PF', expectedCnaePrefixes: [], active: true, requirements: [{ documentTypeId: tCnpj.id, required: true, instructions: '' }] } as any)).rejects.toMatchObject({ code: 'WRONG_MODULE' })
+      await expect(settingsUC.saveModel(pfAdmin, null, { name: 'Errado', description: null, personKind: 'PJ', expectedCnaePrefixes: [], active: true, requirements: [] } as any)).rejects.toMatchObject({ code: 'WRONG_MODULE' })
+      pfModel = await settingsUC.saveModel(pfAdmin, null, { name: 'Pessoa física', description: 'x', personKind: 'PF', expectedCnaePrefixes: [], active: true, requirements: [{ documentTypeId: pfType.id, required: true, instructions: '' }] } as any)
+    })
+
+    it('cada módulo aceita só o seu documento e só quem tem o módulo', async () => {
+      const asPf = await staff(gestorPf, 'pf')
+      await expect(requests.createRequest(await staff(users.analista, 'pj'), { module: 'pj', document: CPF, contactEmail: 'p@t.com', urgency: 'normal', sendInvite: false } as any)).rejects.toMatchObject({ code: 'WRONG_MODULE' })
+      await expect(requests.createRequest(asPf, { module: 'pf', document: '45723174000110', contactEmail: 'p@t.com', urgency: 'normal', sendInvite: false } as any)).rejects.toMatchObject({ code: 'WRONG_MODULE' })
+      await expect(requests.createRequest(await staff(users.analista, 'pf'), { module: 'pf', document: CPF, contactEmail: 'p@t.com', urgency: 'normal', sendInvite: false } as any)).rejects.toMatchObject({ status: 403 })
+      await expect(requests.listRequests(await staff(users.analista, 'pf'), 'all', 'pf')).rejects.toMatchObject({ status: 403 })
+      await expect(requests.listRequests(await staff(gestorPf, 'pj'), 'all', 'pj')).rejects.toMatchObject({ status: 403 })
+    })
+
+    it('fluxo PF: sem risco e sem qualificação, avisos só para a gestão PF e dados pessoais no UAU', async () => {
+      const asPf = await staff(gestorPf, 'pf')
+      mails.length = 0
+      const r = await requests.createRequest(asPf, { module: 'pf', document: CPF, modelId: pfModel.id, contactEmail: 'pessoa@t.com', urgency: 'normal', sendInvite: true } as any)
+      const d0 = await requests.getRequest(asPf, r.id)
+      expect([d0.module, d0.status, d0.model?.id]).toEqual(['pf', 'aguardando_fornecedor', pfModel.id])
+      // convite do PF: sem menção a fornecedor
+      const inviteMail = mails.find((m) => m.to.includes('pessoa@t.com'))!
+      expect(inviteMail.subject).toMatch(/cadastro de pessoa física/)
+      expect(`${inviteMail.subject} ${inviteMail.html}`).not.toMatch(/fornecedor/i)
+
+      // a gestão PJ não enxerga a solicitação de PF (o servidor recorta o usuário para o módulo PF)
+      await expect(requests.getRequest(await staff(users.aprovador, 'pf'), r.id)).rejects.toMatchObject({ status: 404 })
+      expect((await requests.listRequests(await staff(users.aprovador, 'pj'), 'all', 'pj')).some((x) => x.id === r.id)).toBe(false)
+
+      const [invite] = (await db.select().from(schema.invites).where(eq(schema.invites.requestId, r.id))).filter((i: any) => !i.revokedAt)
+      const profile = {
+        document: CPF,
+        legalName: 'MARIA DA SILVA',
+        email: 'pessoa@t.com',
+        phoneDdd: '62',
+        phoneNumber: '999990000',
+        address: { cep: '74003010', street: 'Rua 2', number: '5', complement: null, district: 'Centro', city: 'Goiânia', uf: 'GO' },
+        bank: null,
+        pix: null,
+      }
+      await portal.portalUpload(supplierPortal(), invite.id, { file: pdf('rg.pdf'), documentTypeId: pfType.id, issuedAt: null, expiresAt: null })
+      await portal.saveProfile(supplierPortal(), invite.id, profile)
+      await expect(portal.portalSubmit(supplierPortal(), invite.id)).rejects.toBeTruthy() // falta nascimento, sexo, estado civil e RG
+      await portal.saveProfile(supplierPortal(), invite.id, { ...profile, person: { birthDate: '1990-04-12', sex: 'F', maritalStatus: 'casado', rgNumber: '1234567', rgIssuer: 'SSP', rgUf: 'GO' } })
+      mails.length = 0
+      await portal.portalSubmit(supplierPortal(), invite.id)
+      expect(mails.some((m) => m.to.includes('gestor.pf@t.com'))).toBe(true)
+      expect(mails.some((m) => m.to.includes('aprovador@t.com') || m.to.includes('dev.pf@t.com') || m.to.includes('dev.geral@t.com'))).toBe(false)
+
+      await expect(qualificationUC.saveQualification(asPf, r.id, { answers: [{ questionId: '00000000-0000-4000-8000-000000000000', answer: 'sim' }] })).rejects.toMatchObject({ code: 'NO_QUALIFICATION_PF' })
+      const d1 = await requests.getRequest(asPf, r.id)
+      await expect(suppliersUC.runRiskCheck(asPf, d1.supplier.id, r.id)).rejects.toMatchObject({ code: 'NO_RISK_PF' })
+      for (const doc of d1.documents) await requests.reviewDocument(asPf, r.id, doc.id, { status: 'aprovado', note: null, issuedAt: null, expiresAt: null })
+      await requests.sendToApproval(asPf, r.id)
+
+      uauCalls.length = 0
+      await approval.approveRequest(asPf, r.id)
+      const save = uauCalls.find((c) => c.route.endsWith('GravarPessoa'))?.body
+      expect(save.info_pes).toMatchObject({ tipo_pes: 0, cpf_pes: CPF, dtnasc_pes: '1990-04-12T00:00:00' })
+      expect(save.info_pesfis).toMatchObject({ sexo_pf: 1, estciv_pf: 2, doc_pf: '1234567', tdoc_pf: 'RG' })
+      const attach = uauCalls.find((c) => c.route.endsWith('AnexarArquivosBase64Request'))?.body
+      expect(attach.lista_arquivos.map((x: any) => x.NomeArquivo)).toEqual(['rg'])
+      expect((await requests.getRequest(asPf, r.id)).status).toBe('gravado_uau')
+    })
+
+    it('base, painel, ficha, modelos e avaliação respeitam o módulo', async () => {
+      const asPf = await staff(gestorPf, 'pf')
+      const people = await suppliersUC.listSuppliers(asPf, 'pf')
+      expect(people.map((x) => x.document)).toEqual([CPF])
+      expect((await suppliersUC.listSuppliers(await staff(users.analista, 'pj'), 'pj')).some((x) => x.document === CPF)).toBe(false)
+      await expect(suppliersUC.getSupplier(await staff(users.analista, 'pf'), people[0]!.id)).rejects.toMatchObject({ status: 403 })
+      const dash = await dashboard.getDashboard(asPf, 'pf')
+      expect([dash.suppliers.total, dash.requests.byStatus.gravado_uau]).toEqual([1, 1])
+      expect(await suppliersUC.searchEvaluableSuppliers(await staff(users.obra, 'pj'), 'maria')).toEqual([])
+      await expect(suppliersUC.createEvaluation(await staff(users.analista, 'pj'), { supplierId: people[0]!.id, workName: 'Ipanema 212', scores: {}, comment: null } as any)).rejects.toMatchObject({ code: 'NO_EVALUATION_PF' })
+      expect((await settingsUC.listModels(asPf, { module: 'pf' })).map((m) => m.name)).toEqual(['Pessoa física'])
+    })
+
+    it('importação do UAU por módulo: o PF traz só pessoas físicas ativas com CPF válido', async () => {
+      const person = (cod: number, doc: string, tipo: number, extra: Record<string, unknown> = {}) => ({ CodigoPessoa: cod, NomePessoa: `PESSOA ${cod}`, NomeFantasia: '', TipoPessoa: tipo, CpfPessoa: doc, AtivoInativo: 0, EmailPessoa: '', ...extra })
+      uauPeople = [
+        person(1, '39053344705', 0),
+        person(2, '39053344705', 0), // CPF repetido: fica o código 2
+        person(3, '11111111111', 0), // CPF inválido
+        person(4, '15350946056', 0, { AtivoInativo: 1 }), // inativa
+        person(5, '06990590000123', 1), // empresa: é do PJ
+        person(7, CPF, 0), // já existe no app com código mais novo (9999, da gravação): fica como está
+      ]
+      const [devPf] = await db.insert(schema.users).values({ email: 'importa.pf@t.com', fullName: 'Importa PF', roles: ['dev-pf'] }).returning()
+      const asDevPf = await staff(devPf, 'pf')
+      let cursor = { from: 0, emptyStreak: 0 }
+      const total = { created: 0, updated: 0, outro_tipo: 0, invalida: 0, inativa: 0, duplicada: 0 }
+      for (;;) {
+        const r = await suppliersUC.syncFromUau(asDevPf, cursor)
+        total.created += r.created
+        total.updated += r.updated
+        for (const k of ['outro_tipo', 'invalida', 'inativa', 'duplicada'] as const) total[k] += r.skipped[k]
+        cursor = { from: r.from, emptyStreak: r.emptyStreak }
+        if (r.done) break
+      }
+      expect(total).toEqual({ created: 1, updated: 0, outro_tipo: 1, invalida: 1, inativa: 1, duplicada: 1 })
+      const people = await suppliersUC.listSuppliers(asDevPf, 'pf')
+      expect(people.map((p) => p.document).sort()).toEqual(['39053344705', CPF].sort())
+      expect(people.find((p) => p.document === CPF)?.uauCodPes).toBe(9999)
+      // a empresa não entrou em lugar nenhum; e quem não tem o PF não importa no PF
+      expect((await suppliersUC.listSuppliers(await staff(users.analista, 'pj'), 'pj')).some((x) => x.document === '06990590000123')).toBe(false)
+      await expect(suppliersUC.syncFromUau(await staff(users.analista, 'pf'), { from: 0, emptyStreak: 0 })).rejects.toMatchObject({ status: 403 })
+      uauPeople = []
+    })
   })
 })

@@ -4,7 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Download, Search, Star } from 'lucide-react'
 import type { ImportResultDTO, SupplierListItemDTO, UauSyncDTO } from '@shared/contracts'
 import { onlyDigits } from '@shared/domain/document-number'
-import { SUPPLIER_STATUS_LABELS, SUPPLIER_STATUSES, type SupplierStatus } from '@shared/domain/supplier'
+import { SUPPLIER_STATUSES, type SupplierStatus } from '@shared/domain/supplier'
+import { supplierStatusLabel } from '@shared/domain/terms'
+import { MODULE_INFO, type Module } from '@shared/domain/modules'
 import { PERMISSIONS } from '@shared/domain/roles'
 import { PATHS } from '@/app/navigation'
 import { RiskBadge, SupplierStatusBadge } from '@/components/domain/badges'
@@ -21,12 +23,13 @@ const MAX_ROWS = 200
 const OUTCOME_LABEL = { importado: 'Importado', ja_existe: 'Já existia', nao_encontrado: 'Não está no UAU', erro: 'Erro' } as const
 
 type SyncTotals = Omit<UauSyncDTO, 'from' | 'emptyStreak' | 'done'>
-const EMPTY_TOTALS: SyncTotals = { read: 0, created: 0, updated: 0, skipped: { pessoa_fisica: 0, inativa: 0, invalida: 0, duplicada: 0 } }
+const EMPTY_TOTALS: SyncTotals = { read: 0, created: 0, updated: 0, skipped: { outro_tipo: 0, inativa: 0, invalida: 0, duplicada: 0 } }
 /** Só para a barra de progresso: o maior código de pessoa visto no UAU em 11/2026 era 8.757. */
 const EXPECTED_LAST_CODE = 9000
 
 /** Importa a base inteira do UAU, chamando o servidor em etapas até o fim do cadastro. */
-function FullSync({ onClose }: { onClose: () => void }) {
+function FullSync({ onClose, module }: { onClose: () => void; module: Module }) {
+  const pf = module === 'pf'
   const qc = useQueryClient()
   const [running, setRunning] = useState(false)
   const [from, setFrom] = useState(0)
@@ -46,7 +49,7 @@ function FullSync({ onClose }: { onClose: () => void }) {
     }
     try {
       for (;;) {
-        const r = await api<UauSyncDTO>('/suppliers/uau-sync', { method: 'POST', body: cursor })
+        const r = await api<UauSyncDTO>(`/suppliers/uau-sync?module=${module}`, { method: 'POST', body: cursor })
         setTotals((t) => ({
           read: t.read + r.read,
           created: t.created + r.created,
@@ -75,7 +78,15 @@ function FullSync({ onClose }: { onClose: () => void }) {
   return (
     <div className="space-y-4">
       <p className="text-sm text-text-muted">
-        Lê todo o cadastro de pessoas do UAU e traz as <strong className="text-text">pessoas jurídicas ativas</strong> como fornecedores homologados. Pessoas físicas ficam de fora (em boa parte são clientes).
+        {pf ? (
+          <>
+            Lê todo o cadastro de pessoas do UAU e traz as <strong className="text-text">pessoas físicas ativas</strong> (CPF válido) como cadastradas. Empresas ficam de fora (são do módulo Fornecedores/PJ).
+          </>
+        ) : (
+          <>
+            Lê todo o cadastro de pessoas do UAU e traz as <strong className="text-text">pessoas jurídicas ativas</strong> como fornecedores homologados. Pessoas físicas ficam de fora (em boa parte são clientes).
+          </>
+        )}{' '}
         Quem já está no app não é duplicado: os importados são atualizados e os cadastrados pelo app só ganham o código do UAU. Leva de 1 a 3 minutos; mantenha esta janela aberta.
       </p>
       {started && (
@@ -91,7 +102,7 @@ function FullSync({ onClose }: { onClose: () => void }) {
               ['Pessoas lidas', totals.read],
               ['Novos', totals.created],
               ['Atualizados', totals.updated],
-              ['Ignorados', totals.skipped.pessoa_fisica + totals.skipped.inativa + totals.skipped.invalida + totals.skipped.duplicada],
+              ['Ignorados', totals.skipped.outro_tipo + totals.skipped.inativa + totals.skipped.invalida + totals.skipped.duplicada],
             ].map(([label, n]) => (
               <div key={label} className="rounded-control border border-border-soft px-3 py-2">
                 <dt className="text-xs text-text-muted">{label}</dt>
@@ -101,8 +112,8 @@ function FullSync({ onClose }: { onClose: () => void }) {
           </dl>
           {done && (
             <p className="text-xs text-text-muted">
-              Ignorados: {totals.skipped.pessoa_fisica.toLocaleString('pt-BR')} pessoa(s) física(s), {totals.skipped.inativa} inativa(s), {totals.skipped.invalida} sem CNPJ válido e{' '}
-              {totals.skipped.duplicada} CNPJ(s) repetido(s) no UAU.
+              Ignorados: {totals.skipped.outro_tipo.toLocaleString('pt-BR')} {pf ? 'empresa(s)' : 'pessoa(s) física(s)'}, {totals.skipped.inativa} inativa(s), {totals.skipped.invalida} sem {pf ? 'CPF' : 'CNPJ'} válido e{' '}
+              {totals.skipped.duplicada} {pf ? 'CPF' : 'CNPJ'}(s) repetido(s) no UAU.
             </p>
           )}
         </div>
@@ -124,8 +135,15 @@ function FullSync({ onClose }: { onClose: () => void }) {
   )
 }
 
-function ImportDialog({ onClose }: { onClose: () => void }) {
+function ImportDialog({ onClose, module }: { onClose: () => void; module: Module }) {
   const [mode, setMode] = useState<'base' | 'lista'>('base')
+  // PF: só a base inteira (a busca por documento é do módulo Fornecedores/PJ)
+  if (module === 'pf')
+    return (
+      <Dialog open onClose={onClose} width="min(92vw, 42rem)" title="Importar pessoas físicas do UAU" description="Traz para o app as pessoas físicas que já estão cadastradas no UAU, para controlar documentos e cadastros.">
+        <FullSync onClose={onClose} module="pf" />
+      </Dialog>
+    )
   return (
     <Dialog
       open
@@ -152,7 +170,7 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
           </button>
         ))}
       </div>
-      {mode === 'base' ? <FullSync onClose={onClose} /> : <ListImport onClose={onClose} />}
+      {mode === 'base' ? <FullSync onClose={onClose} module="pj" /> : <ListImport onClose={onClose} />}
     </Dialog>
   )
 }
@@ -197,12 +215,14 @@ function ListImport({ onClose }: { onClose: () => void }) {
   )
 }
 
-export default function SuppliersPage() {
+export default function SuppliersPage({ module = 'pj' }: { module?: Module }) {
   const { can } = useAuth()
+  // Pessoas Físicas/PF: sem risco e avaliação; a importação traz só pessoas físicas
+  const pf = module === 'pf'
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState<SupplierStatus | ''>('')
   const [importing, setImporting] = useState(false)
-  const q = useQuery({ queryKey: ['suppliers'], queryFn: () => api<SupplierListItemDTO[]>('/suppliers') })
+  const q = useQuery({ queryKey: ['suppliers', module], queryFn: () => api<SupplierListItemDTO[]>(`/suppliers?module=${module}`) })
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -217,9 +237,9 @@ export default function SuppliersPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Fornecedores"
-        title="Base de fornecedores"
-        description="Homologados, em cadastro e importados do UAU, com risco, documentos e avaliação."
+        eyebrow={pf ? MODULE_INFO.pf.label : 'Fornecedores'}
+        title={pf ? 'Base de pessoas físicas' : 'Base de fornecedores'}
+        description={pf ? 'Pessoas físicas cadastradas e em cadastro, com documentos e código no UAU.' : 'Homologados, em cadastro e importados do UAU, com risco, documentos e avaliação.'}
         actions={
           can(PERMISSIONS.supplierManage) && (
             <Button icon={<Download className="size-4" />} onClick={() => setImporting(true)}>
@@ -231,13 +251,13 @@ export default function SuppliersPage() {
       <div className="mb-4 flex flex-wrap gap-3">
         <div className="relative w-full max-w-sm">
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-400" aria-hidden />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Nome ou CNPJ/CPF" className="pl-9" aria-label="Buscar fornecedor" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={pf ? 'Nome ou CPF' : 'Nome ou CNPJ'} className="pl-9" aria-label="Buscar" />
         </div>
         <Select value={status} onChange={(e) => setStatus(e.target.value as SupplierStatus | '')} className="w-48" aria-label="Situação">
           <option value="">Todas as situações</option>
           {SUPPLIER_STATUSES.map((s) => (
             <option key={s} value={s}>
-              {SUPPLIER_STATUS_LABELS[s]}
+              {supplierStatusLabel(s, module)}
             </option>
           ))}
         </Select>
@@ -251,11 +271,11 @@ export default function SuppliersPage() {
             <table className="w-full text-sm">
               <thead className="bg-ink-50 text-left text-xs font-semibold text-text-muted">
                 <tr>
-                  <th className="px-4 py-3">Fornecedor</th>
+                  <th className="px-4 py-3">{pf ? 'Pessoa' : 'Fornecedor'}</th>
                   <th className="px-4 py-3">Situação</th>
-                  <th className="px-4 py-3">Risco</th>
+                  {!pf && <th className="px-4 py-3">Risco</th>}
                   <th className="px-4 py-3">Documentos</th>
-                  <th className="px-4 py-3">Avaliação</th>
+                  {!pf && <th className="px-4 py-3">Avaliação</th>}
                   <th className="px-4 py-3">UAU</th>
                 </tr>
               </thead>
@@ -274,9 +294,11 @@ export default function SuppliersPage() {
                     <td className="px-4 py-3">
                       <SupplierStatusBadge status={s.status} />
                     </td>
-                    <td className="px-4 py-3">
-                      <RiskBadge level={s.riskLevel} compact />
-                    </td>
+                    {!pf && (
+                      <td className="px-4 py-3">
+                        <RiskBadge level={s.riskLevel} compact />
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       {s.docsExpired > 0 ? (
                         <Badge tone="error">{s.docsExpired} vencido(s)</Badge>
@@ -286,6 +308,7 @@ export default function SuppliersPage() {
                         <span className="text-text-muted">—</span>
                       )}
                     </td>
+                    {!pf && (
                     <td className="px-4 py-3">
                       {s.average !== null ? (
                         <>
@@ -301,6 +324,7 @@ export default function SuppliersPage() {
                         <span className="text-text-muted">—</span>
                       )}
                     </td>
+                    )}
                     <td className="tabular px-4 py-3 text-text-muted">{s.uauCodPes ?? '—'}</td>
                   </tr>
                 ))}
@@ -308,15 +332,15 @@ export default function SuppliersPage() {
             </table>
             {rows.length > MAX_ROWS && (
               <p className="border-t border-border-soft px-4 py-3 text-xs text-text-muted">
-                Mostrando {MAX_ROWS} de {rows.length.toLocaleString('pt-BR')} fornecedores. Use a busca ou o filtro de situação para achar os demais.
+                Mostrando {MAX_ROWS} de {rows.length.toLocaleString('pt-BR')} {pf ? 'pessoas' : 'fornecedores'}. Use a busca ou o filtro de situação para achar os demais.
               </p>
             )}
           </div>
         ) : (
-          <EmptyState title="Nenhum fornecedor" description="Abra uma solicitação de cadastro ou importe a base do UAU." />
+          <EmptyState title={pf ? 'Nenhuma pessoa física' : 'Nenhum fornecedor'} description={pf ? 'Abra uma solicitação de cadastro de pessoa física.' : 'Abra uma solicitação de cadastro ou importe a base do UAU.'} />
         )}
       </Card>
-      {importing && <ImportDialog onClose={() => setImporting(false)} />}
+      {importing && <ImportDialog module={module} onClose={() => setImporting(false)} />}
     </>
   )
 }

@@ -8,7 +8,7 @@
  *   Anexo/AnexarArquivosBase64Request             → documentos, chave "Pessoas <cod_pes>"
  */
 import { onlyDigits } from './document-number'
-import type { SupplierProfile } from './supplier'
+import type { MaritalStatus, Sex, SupplierProfile } from './supplier'
 
 export const UAU_ROUTES = {
   findByDocument: 'Pessoas/ConsultarDadosPessoaPorCpfCnpjEStatus',
@@ -62,6 +62,28 @@ function foundationDate(v: string | null | undefined): string | undefined {
   return m ? `${m[1]}-${m[2]}-${m[3]}T00:00:00` : undefined
 }
 
+/**
+ * Códigos do UAU para pessoa física. A API não documenta as listas: CONFIRMAR NO TESTE REAL
+ * (abrir a pessoa gravada na tela do UAU e conferir sexo e estado civil) e ajustar aqui se preciso.
+ */
+export const UAU_SEX_CODES: Record<Sex, number> = { M: 0, F: 1 }
+export const UAU_MARITAL_CODES: Record<MaritalStatus, number> = { solteiro: 1, casado: 2, separado: 3, divorciado: 4, viuvo: 5, uniao_estavel: 1 }
+
+/** Bloco de pessoa física: com os dados informados no CPF; para CNPJ fica como já validado no UAU. */
+function pesFis(p: SupplierProfile) {
+  if (p.document.length !== 11 || !p.person) return { cod_pf: 0, sexo_pf: 0, indicativofiscal_pf: 0 }
+  const x = p.person
+  return {
+    cod_pf: 0,
+    sexo_pf: UAU_SEX_CODES[x.sex],
+    estciv_pf: UAU_MARITAL_CODES[x.maritalStatus],
+    uniaoestavel_pf: x.maritalStatus === 'uniao_estavel',
+    doc_pf: x.rgNumber.slice(0, 20),
+    tdoc_pf: 'RG',
+    indicativofiscal_pf: 0,
+  }
+}
+
 export function buildSavePersonBody(p: SupplierProfile, opts: { user: string; now: Date; foundedAt?: string | null }) {
   const pj = p.document.length === 14
   const address = (tipo: 0 | 1) => ({
@@ -84,8 +106,8 @@ export function buildSavePersonBody(p: SupplierProfile, opts: { user: string; no
       tipo_pes: pj ? 1 : 0,
       cpf_pes: onlyDigits(p.document),
       dtcad_pes: opts.now.toISOString(),
-      // Campo "Fundação" da tela do UAU (para PJ): data de abertura do CNPJ na Receita
-      dtnasc_pes: pj ? foundationDate(opts.foundedAt) : undefined,
+      // PJ: campo "Fundação" = abertura do CNPJ na Receita · PF: data de nascimento informada
+      dtnasc_pes: pj ? foundationDate(opts.foundedAt) : foundationDate(p.person?.birthDate),
       intext_pes: UAU_EXTERNO,
       usrcad_pes: opts.user,
       status_pes: UAU_STATUS_CONFIRMADO,
@@ -101,7 +123,7 @@ export function buildSavePersonBody(p: SupplierProfile, opts: { user: string; no
     },
     // O exemplo oficial (Postman da Globaltec) manda SEMPRE os dois blocos; sem um deles o UAU devolve HTTP 500.
     // O controller lê alguns números com .Value: vazios dão "O objeto nulo deve ter um valor" (HTTP 500).
-    info_pesfis: { cod_pf: 0, sexo_pf: 0, indicativofiscal_pf: 0 },
+    info_pesfis: pesFis(p),
     infopes_jur: { cod_pj: 0, natureza_pj: 0, contato_pj: pj ? (p.contactName ?? undefined) : undefined, optantesimples_pj: pj ? (p.simplesNacional ?? undefined) : undefined },
     info_pesendereco_principal: address(0),
     infopesendereco_cobranca: address(1),

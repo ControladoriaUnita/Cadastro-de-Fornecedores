@@ -3,9 +3,11 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { FileCheck2, Flame, Plus, Search } from 'lucide-react'
 import type { RequestCardDTO } from '@shared/contracts'
-import { KANBAN_COLUMNS, STATUS_DESCRIPTIONS, STATUS_LABELS, type RequestStatus } from '@shared/domain/request/status'
+import { KANBAN_COLUMNS, type RequestStatus } from '@shared/domain/request/status'
+import { statusDescription, statusLabel } from '@shared/domain/terms'
+import { MODULE_INFO, type Module } from '@shared/domain/modules'
 import { PERMISSIONS } from '@shared/domain/roles'
-import { PATHS } from '@/app/navigation'
+import { MODULE_PATHS, PATHS } from '@/app/navigation'
 import { RequestStatusBadge, RiskBadge } from '@/components/domain/badges'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Alert, Button, Input, Skeleton } from '@/components/ui'
@@ -33,7 +35,7 @@ function RequestCard({ r }: { r: RequestCardDTO }) {
       <p className="mt-2 truncate text-xs text-ink-600">{r.modelName ?? 'Modelo a definir'}</p>
       {r.workName && <p className="truncate text-xs text-ink-600">Obra: {r.workName}</p>}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        {r.riskLevel !== 'nao_avaliado' && <RiskBadge level={r.riskLevel} compact />}
+        {r.module === 'pj' && r.riskLevel !== 'nao_avaliado' && <RiskBadge level={r.riskLevel} compact />}
         {r.docs.required > 0 && (
           <span className={cn('inline-flex items-center gap-1 text-xs', r.docs.approved === r.docs.required ? 'text-success' : 'text-text-muted')}>
             <FileCheck2 className="size-3.5" aria-hidden />
@@ -46,13 +48,14 @@ function RequestCard({ r }: { r: RequestCardDTO }) {
   )
 }
 
-export default function KanbanPage() {
+export default function KanbanPage({ module = 'pj' }: { module?: Module }) {
   const { can } = useAuth()
   const seeAll = can(PERMISSIONS.requestReadAll)
   const [scope, setScope] = useState<'all' | 'mine'>(seeAll ? 'all' : 'mine')
   const [search, setSearch] = useState('')
   const [showClosed, setShowClosed] = useState(false)
-  const q = useQuery({ queryKey: ['requests', scope], queryFn: () => api<RequestCardDTO[]>(`/requests?scope=${scope}`), refetchInterval: 60_000 })
+  const q = useQuery({ queryKey: ['requests', module, scope], queryFn: () => api<RequestCardDTO[]>(`/requests?scope=${scope}&module=${module}`), refetchInterval: 60_000 })
+  const pf = module === 'pf'
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -73,12 +76,12 @@ export default function KanbanPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Solicitações"
-        title="Kanban de cadastros"
-        description={can(PERMISSIONS.requestAnalyze) ? 'Cada cartão é uma solicitação. Clique para abrir, conferir e mover de etapa.' : 'Acompanhe as solicitações que você abriu. Suprimentos faz a triagem e envia o formulário ao fornecedor.'}
+        eyebrow={pf ? `Solicitações · ${MODULE_INFO.pf.label}` : 'Solicitações'}
+        title={pf ? 'Kanban de pessoas físicas' : 'Kanban de cadastros'}
+        description={can(PERMISSIONS.requestAnalyze) ? 'Cada cartão é uma solicitação. Clique para abrir, conferir e mover de etapa.' : pf ? 'Acompanhe as solicitações que você abriu. A equipe faz a triagem e envia o formulário à pessoa.' : 'Acompanhe as solicitações que você abriu. Suprimentos faz a triagem e envia o formulário ao fornecedor.'}
         actions={
           can(PERMISSIONS.requestCreate) && (
-            <Link to={PATHS.newRequest}>
+            <Link to={MODULE_PATHS[module].newRequest}>
               <Button variant="primary" icon={<Plus className="size-4" />}>
                 Nova solicitação
               </Button>
@@ -89,7 +92,7 @@ export default function KanbanPage() {
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="relative w-full max-w-sm">
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-400" aria-hidden />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por fornecedor, CNPJ, nº, obra…" className="pl-9" aria-label="Buscar" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={pf ? 'Buscar por nome, CPF, nº…' : 'Buscar por fornecedor, CNPJ, nº, obra…'} className="pl-9" aria-label="Buscar" />
         </div>
         {seeAll && (
           <div className="inline-flex rounded-control border border-border bg-surface p-0.5 text-sm" role="group" aria-label="Quais solicitações">
@@ -118,8 +121,8 @@ export default function KanbanPage() {
           {columns.map((status) => {
             const cards = filtered.filter((r) => r.status === status)
             return (
-              <section key={status} className="flex w-64 shrink-0 flex-col rounded-card bg-ink-100/70 p-3 2xl:w-auto 2xl:min-w-0 2xl:flex-1" aria-label={STATUS_LABELS[status]}>
-                <header className="mb-3 flex items-center justify-between gap-2 px-1" title={STATUS_DESCRIPTIONS[status]}>
+              <section key={status} className="flex w-64 shrink-0 flex-col rounded-card bg-ink-100/70 p-3 2xl:w-auto 2xl:min-w-0 2xl:flex-1" aria-label={statusLabel(status, module)}>
+                <header className="mb-3 flex items-center justify-between gap-2 px-1" title={statusDescription(status, module)}>
                   <RequestStatusBadge status={status} />
                   <span className="tabular text-sm font-semibold text-ink-600">{q.isLoading ? '…' : cards.length}</span>
                 </header>

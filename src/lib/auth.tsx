@@ -5,6 +5,8 @@
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { UserDTO } from '@shared/contracts'
+import type { Module } from '@shared/domain/modules'
+import { useModule } from '@/app/module'
 import type { Permission } from '@shared/domain/roles'
 import { api, ApiError } from './api'
 
@@ -13,6 +15,8 @@ interface AuthState {
   user: UserDTO | null
   error: string | null
   can: (p: Permission) => boolean
+  /** Acesso ao módulo (Fornecedores/PJ ou Pessoas Físicas/PF) */
+  hasModule: (m: Module) => boolean
   signOut: () => Promise<void>
   refresh: () => Promise<void>
 }
@@ -21,6 +25,7 @@ const AuthContext = createContext<AuthState | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient()
+  const module = useModule()
   const me = useQuery({
     queryKey: ['me'],
     queryFn: async () => {
@@ -52,11 +57,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status,
       user,
       error: me.error ? (me.error as Error).message : null,
-      can: (p) => !!user?.permissions.includes(p),
+      // Permissões do módulo atual (os módulos são independentes)
+      can: (p) => !!user?.access?.[module]?.includes(p),
+      hasModule: (m) => !!user?.modules?.includes(m),
       signOut,
       refresh,
     }
-  }, [me.data, me.isLoading, me.isError, me.error, signOut, refresh])
+  }, [me.data, me.isLoading, me.isError, me.error, signOut, refresh, module])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

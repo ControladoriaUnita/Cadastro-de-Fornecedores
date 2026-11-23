@@ -6,7 +6,9 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Lock, Pencil, Plus, Search, ShieldCheck, Trash2, Users as UsersIcon } from 'lucide-react'
 import type { RoleDTO, TeamUserDTO } from '@shared/contracts'
+import { MODULE_INFO, moduleDevRoleKey } from '@shared/domain/modules'
 import { ALL_PERMISSIONS, DEV_ROLE_KEY, PERMISSION_INFO, permissionsFor, type Permission } from '@shared/domain/roles'
+import { useModule } from '@/app/module'
 import { Alert, Badge, Button, Card, CardHeader, ConfirmDialog, Dialog, EmptyState, Field, Input, Skeleton } from '@/components/ui'
 import { api, errorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -15,7 +17,8 @@ import { formatDateTime } from '@/utils/format'
 const GROUPS = [...new Set(ALL_PERMISSIONS.map((p) => PERMISSION_INFO[p].group))]
 
 function useRoles() {
-  return useQuery({ queryKey: ['roles'], queryFn: () => api<RoleDTO[]>('/roles') })
+  const module = useModule()
+  return useQuery({ queryKey: ['roles', module], queryFn: () => api<RoleDTO[]>('/roles') })
 }
 
 // ----------------------------------------------------------------------------- cargos
@@ -118,6 +121,7 @@ function RoleEditor({ role, onClose }: { role: RoleDTO | null; onClose: () => vo
 }
 
 export function RolesManager() {
+  const module = useModule()
   const qc = useQueryClient()
   const q = useRoles()
   const [edit, setEdit] = useState<RoleDTO | 'new' | null>(null)
@@ -133,7 +137,7 @@ export function RolesManager() {
   return (
     <Card>
       <CardHeader
-        title="Cargos e permissões"
+        title={`Cargos e permissões · ${MODULE_INFO[module].label}`}
         description="Cada cargo libera um conjunto de telas e ações. Um usuário pode ter vários cargos; as permissões se somam."
         actions={
           <Button size="sm" variant="primary" icon={<Plus className="size-4" />} onClick={() => setEdit('new')}>
@@ -207,20 +211,23 @@ export function RolesManager() {
 export function UsersManager() {
   const qc = useQueryClient()
   const { user: me } = useAuth()
-  const q = useQuery({ queryKey: ['users'], queryFn: () => api<TeamUserDTO[]>('/users') })
+  const module = useModule()
+  const q = useQuery({ queryKey: ['users', module], queryFn: () => api<TeamUserDTO[]>('/users') })
   const roles = useRoles()
   const [search, setSearch] = useState('')
   const [edit, setEdit] = useState<TeamUserDTO | 'new' | null>(null)
   const [form, setForm] = useState({ fullName: '', email: '', roles: [] as string[], active: true })
   const roleName = useMemo(() => new Map((roles.data ?? []).map((r) => [r.key, r.name])), [roles.data])
-  const iAmDev = !!me?.roles.includes(DEV_ROLE_KEY)
+  // Cargo Dev deste módulo: só um Dev (geral ou do módulo) dá ou tira
+  const devKey = moduleDevRoleKey(module)
+  const iAmDev = !!me?.globalDev || !!me?.roles.includes(devKey)
 
   const open = (u: TeamUserDTO | 'new') => {
     setEdit(u)
-    setForm(u === 'new' ? { fullName: '', email: '', roles: [], active: true } : { fullName: u.fullName, email: u.email, roles: u.roles, active: u.active })
+    setForm(u === 'new' ? { fullName: '', email: '', roles: [], active: true } : { fullName: u.fullName, email: u.email, roles: u.roles.filter((r) => r !== DEV_ROLE_KEY), active: u.active })
   }
   const save = useMutation({
-    mutationFn: () => api(edit === 'new' ? '/users' : `/users/${(edit as TeamUserDTO).id}`, { method: edit === 'new' ? 'POST' : 'PUT', body: form }),
+    mutationFn: (body: typeof form = form) => api(edit === 'new' ? '/users' : `/users/${(edit as TeamUserDTO).id}`, { method: edit === 'new' ? 'POST' : 'PUT', body }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['users'] })
       void qc.invalidateQueries({ queryKey: ['roles'] })
@@ -235,8 +242,8 @@ export function UsersManager() {
   return (
     <Card>
       <CardHeader
-        title="Usuários da equipe"
-        description="Só entra quem estiver aqui. No login Microsoft, o e-mail precisa ser o mesmo da conta."
+        title={`Usuários · ${MODULE_INFO[module].label}`}
+        description="Pessoas com cargo neste módulo. A mesma pessoa pode ter cargos no outro módulo, geridos no Painel dev de lá. No login Microsoft, o e-mail precisa ser o mesmo da conta."
         actions={
           <Button size="sm" variant="primary" icon={<Plus className="size-4" />} onClick={() => open('new')}>
             Novo usuário
@@ -266,8 +273,8 @@ export function UsersManager() {
               </div>
               <div className="flex flex-wrap gap-1">
                 {u.roles.map((r) => (
-                  <Badge key={r} tone={r === DEV_ROLE_KEY ? 'primary' : 'neutral'}>
-                    {roleName.get(r) ?? `${r} (apagado)`}
+                  <Badge key={r} tone={r === DEV_ROLE_KEY || r === devKey ? 'primary' : 'neutral'}>
+                    {r === DEV_ROLE_KEY ? 'Dev geral' : (roleName.get(r) ?? `${r} (apagado)`)}
                   </Badge>
                 ))}
               </div>
@@ -291,7 +298,12 @@ export function UsersManager() {
               <Button variant="ghost" onClick={() => setEdit(null)} className="mr-auto">
                 Cancelar
               </Button>
-              <Button variant="primary" loading={save.isPending} disabled={!form.roles.length || form.fullName.trim().length < 2 || !form.email.includes('@')} onClick={() => save.mutate()}>
+              {edit !== 'new' && (edit.roles.some((r) => r !== DEV_ROLE_KEY)) && (
+                <Button variant="ghost" loading={save.isPending} onClick={() => save.mutate({ ...form, roles: [] })} title="Tira os cargos deste módulo; os do outro módulo continuam">
+                  Remover deste módulo
+                </Button>
+              )}
+              <Button variant="primary" loading={save.isPending} disabled={!form.roles.length || form.fullName.trim().length < 2 || !form.email.includes('@')} onClick={() => save.mutate(form)}>
                 Salvar
               </Button>
             </>
@@ -310,7 +322,7 @@ export function UsersManager() {
               <legend className="text-sm font-medium text-ink-700">Cargos</legend>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 {roles.data?.map((r) => {
-                  const blocked = r.key === DEV_ROLE_KEY && !iAmDev
+                  const blocked = r.key === devKey && !iAmDev
                   return (
                     <label key={r.key} className="flex items-start gap-2 rounded-control border border-border-soft px-3 py-2 text-sm" title={blocked ? 'Só quem é Dev pode dar este cargo' : undefined}>
                       <input
@@ -343,9 +355,12 @@ export function UsersManager() {
                 <p className="mt-1 text-xs text-text-muted">Nada ainda: escolha ao menos um cargo.</p>
               )}
             </div>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" className="accent-primary" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} /> Ativo (pode entrar no app)
-            </label>
+            {/* Ativo/inativo vale para os dois módulos: só o Dev geral muda */}
+            {me?.globalDev && (
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" className="accent-primary" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} /> Ativo (pode entrar no app, nos dois módulos)
+              </label>
+            )}
             {save.isError && <Alert tone="error">{errorMessage(save.error)}</Alert>}
           </div>
         </Dialog>

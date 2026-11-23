@@ -1,17 +1,22 @@
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
-import { LogOut, Menu, X } from 'lucide-react'
+import { LayoutGrid, LogOut, Menu, X } from 'lucide-react'
 import logoWhite from '@/assets/brand/logo-unita-white.png'
-import { NAV } from '@/app/navigation'
+import { useModule } from '@/app/module'
+import { NAV_BY_MODULE } from '@/app/navigation'
+import { MODULE_INFO, MODULES } from '@shared/domain/modules'
 import { Button } from '@/components/ui'
 import { useAuth } from '@/lib/auth'
 import { cn } from '@/utils/cn'
 
 /** Barra superior grafite (64px) com borda laranja de 2px, logo à esquerda e abas centralizadas — Identidade v2. */
 export function AppShell() {
-  const { user, signOut, can } = useAuth()
+  const { user, signOut, can, hasModule } = useAuth()
+  const module = useModule()
   const [open, setOpen] = useState(false)
-  const items = NAV.filter((n) => n.anyOf.some(can))
+  // Menu do módulo atual (se o cargo tiver o módulo) + itens comuns (Painel dev)
+  const items = (hasModule(module) ? NAV_BY_MODULE[module] : []).filter((n) => n.anyOf.some(can))
+  const modules = MODULES.filter(hasModule)
 
   const link = (n: (typeof items)[number], mobile = false) => (
     <NavLink
@@ -35,13 +40,21 @@ export function AppShell() {
     <div className="min-h-full">
       <header className="sticky top-0 z-30 border-b-2 border-primary bg-secondary">
         <div className="grid h-16 grid-cols-[auto_1fr_auto] items-center gap-4 px-4 lg:px-6">
-          <NavLink to="/" aria-label="Início" className="shrink-0">
-            <img src={logoWhite} alt="Unità Engenharia" className="h-8" />
-          </NavLink>
+          <div className="flex shrink-0 items-center gap-3">
+            <NavLink to="/" aria-label="Início — escolher o módulo">
+              <img src={logoWhite} alt="Unità Engenharia" className="h-8" />
+            </NavLink>
+            <span className="hidden border-l border-white/20 pl-3 text-xs font-semibold tracking-wider text-primary uppercase sm:inline">{MODULE_INFO[module].label}</span>
+          </div>
           <nav className="hidden min-w-0 justify-self-center gap-1 overflow-x-auto [scrollbar-width:none] lg:flex" aria-label="Principal">
             {items.map((n) => link(n))}
           </nav>
           <div className="flex items-center gap-3 justify-self-end">
+            {modules.length > 1 && (
+              <NavLink to="/" className="hidden items-center gap-1.5 rounded-control px-3 py-1.5 text-xs font-semibold text-ink-300 hover:bg-white/10 hover:text-white md:inline-flex" title="Voltar à escolha do módulo">
+                <LayoutGrid className="size-4" aria-hidden /> Módulos
+              </NavLink>
+            )}
             {user && (
               <div className="hidden text-right leading-tight md:block">
                 <p className="text-sm font-semibold text-white">{user.fullName}</p>
@@ -64,7 +77,15 @@ export function AppShell() {
         </div>
         {open && (
           <nav className="space-y-1 border-t border-white/10 px-4 py-3 lg:hidden" aria-label="Principal (celular)">
+            {modules.length > 1 && (
+              <p className="px-4 pb-1 text-xs font-semibold tracking-wider text-ink-400 uppercase">{MODULE_INFO[module].label}</p>
+            )}
             {items.map((n) => link(n, true))}
+            {modules.length > 1 && (
+              <NavLink to="/" onClick={() => setOpen(false)} className="block rounded-control px-4 py-2 text-[15px] text-primary hover:bg-white/10">
+                Escolher outro módulo
+              </NavLink>
+            )}
             <button type="button" onClick={signOut} className="block w-full rounded-control px-4 py-2 text-left text-[15px] text-ink-300 hover:bg-white/10 hover:text-white">
               Sair
             </button>

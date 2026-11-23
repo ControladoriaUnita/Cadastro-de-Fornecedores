@@ -1,9 +1,10 @@
 /**
  * Painel dev: diagnóstico das integrações e e-mails registrados.
  */
-import { desc, sql } from 'drizzle-orm'
+import { desc, eq, isNull, or, sql } from 'drizzle-orm'
 import type { DiagnosticsDTO, OutboxItemDTO } from '../../../shared/contracts'
 import { PERMISSIONS } from '../../../shared/domain/roles'
+import { MODULE_INFO } from '../../../shared/domain/modules'
 import { authMode } from '../../infrastructure/auth'
 import { schema } from '../../infrastructure/db/client'
 import { emailProvider } from '../../infrastructure/email'
@@ -47,6 +48,15 @@ export async function diagnostics(deps: UseCaseDeps): Promise<DiagnosticsDTO> {
 
 export async function listOutbox(deps: UseCaseDeps): Promise<OutboxItemDTO[]> {
   requirePermission(deps.ctx.actor, PERMISSIONS.devPanel)
-  const rows = await deps.db.select().from(schema.emailOutbox).orderBy(desc(schema.emailOutbox.createdAt)).limit(50)
-  return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }))
+  // E-mails do módulo (pela solicitação ligada ao e-mail); os que não têm solicitação aparecem nos dois
+  const module = deps.ctx.module ?? 'pj'
+  const rows = await deps.db
+    .select({ e: schema.emailOutbox, kind: schema.suppliers.personKind })
+    .from(schema.emailOutbox)
+    .leftJoin(schema.requests, eq(schema.requests.id, schema.emailOutbox.requestId))
+    .leftJoin(schema.suppliers, eq(schema.suppliers.id, schema.requests.supplierId))
+    .where(or(isNull(schema.emailOutbox.requestId), eq(schema.suppliers.personKind, MODULE_INFO[module].personKind)))
+    .orderBy(desc(schema.emailOutbox.createdAt))
+    .limit(50)
+  return rows.map(({ e }) => ({ ...e, createdAt: e.createdAt.toISOString() }))
 }

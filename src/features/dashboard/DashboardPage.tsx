@@ -3,10 +3,12 @@ import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, Plus } from 'lucide-react'
 import type { DashboardDTO, RatedSupplierDTO } from '@shared/contracts'
 import { monthLabel, scoreBand } from '@shared/domain/evaluation'
-import { KANBAN_COLUMNS, STATUS_LABELS } from '@shared/domain/request/status'
+import { MODULE_INFO, type Module } from '@shared/domain/modules'
+import { KANBAN_COLUMNS } from '@shared/domain/request/status'
+import { statusLabel } from '@shared/domain/terms'
 import { RISK_LEVEL_LABELS, type RiskLevel } from '@shared/domain/risk'
 import { PERMISSIONS } from '@shared/domain/roles'
-import { PATHS } from '@/app/navigation'
+import { MODULE_PATHS, PATHS } from '@/app/navigation'
 import { ExpiryBadge } from '@/components/domain/badges'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Alert, Button, Card, CardBody, CardHeader, EmptyState, Kpi, Skeleton } from '@/components/ui'
@@ -68,20 +70,22 @@ function RatedCard({ title, description, items, empty, warn }: { title: string; 
   )
 }
 
-export default function DashboardPage() {
+export default function DashboardPage({ module = 'pj' }: { module?: Module }) {
   const { user, can } = useAuth()
-  const q = useQuery({ queryKey: ['dashboard'], queryFn: () => api<DashboardDTO>('/dashboard') })
+  const q = useQuery({ queryKey: ['dashboard', module], queryFn: () => api<DashboardDTO>(`/dashboard?module=${module}`) })
   const d = q.data
+  const pf = module === 'pf'
+  const paths = MODULE_PATHS[module]
 
   return (
     <>
       <PageHeader
-        eyebrow="Painel"
+        eyebrow={pf ? `Painel · ${MODULE_INFO.pf.label}` : 'Painel'}
         title={`Olá, ${user?.fullName.split(' ')[0] ?? ''}`}
-        description="Resumo dos fornecedores e das solicitações de cadastro."
+        description={pf ? 'Resumo das pessoas físicas e das solicitações de cadastro.' : 'Resumo dos fornecedores e das solicitações de cadastro.'}
         actions={
           can(PERMISSIONS.requestCreate) && (
-            <Link to={PATHS.newRequest}>
+            <Link to={paths.newRequest}>
               <Button variant="primary" icon={<Plus className="size-4" />}>
                 Nova solicitação
               </Button>
@@ -99,7 +103,7 @@ export default function DashboardPage() {
       ) : (
         <div className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Kpi label="Fornecedores homologados" value={d.suppliers.homologado} hint={`${d.suppliers.total} no total`} />
+            <Kpi label={pf ? 'Pessoas cadastradas' : 'Fornecedores homologados'} value={d.suppliers.homologado} hint={`${d.suppliers.total} no total`} />
             <Kpi label="Solicitações em andamento" value={d.requests.open} hint={`${d.requests.createdLast30} abertas nos últimos 30 dias`} emphasis={d.requests.open > 0} />
             <Kpi
               label="Tempo médio até o UAU"
@@ -114,12 +118,12 @@ export default function DashboardPage() {
             />
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
+          <div className={cn('grid gap-6', pf ? '' : 'lg:grid-cols-3')}>
+            <Card className={pf ? '' : 'lg:col-span-2'}>
               <CardHeader
                 title="Solicitações por etapa"
                 actions={
-                  <Link to={PATHS.requests} className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+                  <Link to={paths.requests} className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
                     Abrir kanban <ArrowRight className="size-4" />
                   </Link>
                 }
@@ -129,7 +133,7 @@ export default function DashboardPage() {
                   const max = Math.max(...KANBAN_COLUMNS.map((k) => d.requests.byStatus[k]))
                   return (
                     <div key={s} className="flex items-center gap-3">
-                      <span className="w-44 shrink-0 text-sm text-ink-700">{STATUS_LABELS[s]}</span>
+                      <span className="w-44 shrink-0 text-sm text-ink-700">{statusLabel(s, module)}</span>
                       <Bar value={d.requests.byStatus[s]} max={max} className={s === 'gravado_uau' ? 'bg-success' : 'bg-primary'} />
                       <span className="tabular w-8 text-right text-sm font-semibold">{d.requests.byStatus[s]}</span>
                     </div>
@@ -138,6 +142,8 @@ export default function DashboardPage() {
               </CardBody>
             </Card>
 
+            {/* Pessoas físicas não têm análise de risco */}
+            {!pf && (
             <Card>
               <CardHeader title="Risco dos fornecedores" description="Última análise de cada um" />
               <CardBody className="space-y-3">
@@ -151,9 +157,10 @@ export default function DashboardPage() {
                 {d.suppliers.bloqueado > 0 && <p className="text-sm text-error">{d.suppliers.bloqueado} fornecedor(es) bloqueado(s).</p>}
               </CardBody>
             </Card>
+            )}
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-3">
+          <div className={cn('grid gap-6', pf ? '' : 'lg:grid-cols-3')}>
             <Card>
               <CardHeader title="Documentos a renovar" />
               {d.expiringList.length ? (
@@ -177,6 +184,9 @@ export default function DashboardPage() {
               )}
             </Card>
 
+            {/* Pessoas físicas não são avaliadas */}
+            {!pf && (
+            <>
             <RatedCard
               title="Melhores avaliados"
               description={`Maiores médias gerais · média de ${monthLabel(d.ratingMonth)} ao lado`}
@@ -190,6 +200,8 @@ export default function DashboardPage() {
               empty="Nenhum fornecedor avaliado ainda."
               warn
             />
+            </>
+            )}
           </div>
         </div>
       )}

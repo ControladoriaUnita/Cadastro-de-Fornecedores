@@ -4,8 +4,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Star } from 'lucide-react'
 import type { ModelDTO, SupplierFullDTO } from '@shared/contracts'
 import { monthLabel, scoreBand } from '@shared/domain/evaluation'
+import { MODULE_INFO, moduleOfKind } from '@shared/domain/modules'
 import { PERMISSIONS } from '@shared/domain/roles'
-import { SUPPLIER_STATUS_LABELS, SUPPLIER_STATUSES, type SupplierStatus } from '@shared/domain/supplier'
+import { SUPPLIER_STATUSES, type SupplierStatus } from '@shared/domain/supplier'
+import { supplierStatusLabel } from '@shared/domain/terms'
+import { useShowModule } from '@/app/module'
 import { PATHS } from '@/app/navigation'
 import { CompanyCard } from '@/components/domain/CompanyCard'
 import { DocumentList } from '@/components/domain/DocumentList'
@@ -30,6 +33,8 @@ export default function SupplierPage() {
   const [tab, setTab] = useState<Tab>('profile')
   const [evaluating, setEvaluating] = useState(false)
   const q = useQuery({ queryKey: ['supplier', id], queryFn: () => api<SupplierFullDTO>(`/suppliers/${id}`) })
+  // Menu e "voltar" seguem o módulo do cadastro (CNPJ = PJ, CPF = PF)
+  useShowModule(q.data ? moduleOfKind(q.data.supplier.personKind) : null)
   const models = useQuery({ queryKey: ['models'], queryFn: () => api<ModelDTO[]>('/models') })
   const set = (r: SupplierFullDTO) => {
     qc.setQueryData(['supplier', id], r)
@@ -43,23 +48,26 @@ export default function SupplierPage() {
   const { supplier: s, documents, riskChecks, evaluations, criteria, scores, requests } = q.data
   const model = models.data?.find((m) => m.id === s.modelId)
   const manage = can(PERMISSIONS.supplierManage)
+  // Pessoas Físicas/PF: sem avaliação e sem análise de risco
+  const pf = s.personKind === 'PF'
   const criterionName = new Map(criteria.map((c) => [c.id, c.name]))
 
   return (
     <>
       <PageHeader
-        eyebrow="Fornecedores"
-        backTo={PATHS.suppliers}
+        eyebrow={pf ? MODULE_INFO.pf.label : 'Fornecedores'}
+        backTo={pf ? PATHS.pfPeople : PATHS.suppliers}
         title={s.tradeName || s.legalName}
         meta={
           <>
-            <SupplierStatusBadge status={s.status} />
-            <RiskBadge level={s.riskLevel} compact />
+            <SupplierStatusBadge status={s.status} module={pf ? 'pf' : 'pj'} />
+            {!pf && <RiskBadge level={s.riskLevel} compact />}
             {s.source === 'uau' && <Badge tone="info">Importado do UAU</Badge>}
           </>
         }
         description={`${s.legalName} · ${formatDocument(s.document)}`}
         actions={
+          !pf &&
           can(PERMISSIONS.evaluationCreate) && (
             <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setEvaluating(true)}>
               Avaliar
@@ -70,16 +78,20 @@ export default function SupplierPage() {
       <div className="mb-6 empty:hidden">
         <SupplierResendAttachments data={q.data} onDone={set} />
       </div>
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <Kpi label="Média geral" value={scores.overall === null ? '—' : formatScore(scores.overall)} hint={`${scores.overallCount} avaliação(ões) no total`} />
-        <Kpi
-          label={`Média de ${monthLabel(scores.monthly[0]!.month)}`}
-          value={scores.month === null ? '—' : formatScore(scores.month)}
-          hint={`${scores.monthCount} avaliação(ões) no mês`}
-        />
+      <div className={pf ? 'mb-6 grid gap-4 sm:grid-cols-2' : 'mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5'}>
+        {!pf && (
+          <>
+            <Kpi label="Média geral" value={scores.overall === null ? '—' : formatScore(scores.overall)} hint={`${scores.overallCount} avaliação(ões) no total`} />
+            <Kpi
+              label={`Média de ${monthLabel(scores.monthly[0]!.month)}`}
+              value={scores.month === null ? '—' : formatScore(scores.month)}
+              hint={`${scores.monthCount} avaliação(ões) no mês`}
+            />
+          </>
+        )}
         <Kpi label="Código no UAU" value={s.uauCodPes ?? '—'} hint={s.uauSyncedAt ? `Sincronizado ${formatDate(s.uauSyncedAt)}` : 'Não gravado'} />
         <Kpi label="Documentos vencidos" value={documents.filter((d) => d.expiry === 'vencido').length} tone={documents.some((d) => d.expiry === 'vencido') ? 'error' : undefined} hint={`${documents.filter((d) => d.expiry === 'vencendo').length} vencendo`} />
-        <Kpi label="Última análise de risco" value={s.riskCheckedAt ? formatDate(s.riskCheckedAt) : '—'} />
+        {!pf && <Kpi label="Última análise de risco" value={s.riskCheckedAt ? formatDate(s.riskCheckedAt) : '—'} />}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
@@ -91,8 +103,12 @@ export default function SupplierPage() {
               items={[
                 { key: 'profile', label: 'Ficha' },
                 { key: 'docs', label: 'Documentos', count: documents.length },
-                { key: 'risk', label: 'Risco' },
-                { key: 'evaluations', label: 'Avaliações', count: evaluations.length },
+                ...(pf
+                  ? []
+                  : [
+                      { key: 'risk' as Tab, label: 'Risco' },
+                      { key: 'evaluations' as Tab, label: 'Avaliações', count: evaluations.length },
+                    ]),
                 { key: 'requests', label: 'Solicitações', count: requests.length },
                 ...(s.receita ? [{ key: 'company' as Tab, label: 'Receita Federal' }] : []),
               ]}
@@ -169,7 +185,7 @@ export default function SupplierPage() {
                     <Link to={PATHS.request(r.id)} className="font-medium hover:text-primary">
                       nº {r.number} · {formatDate(r.createdAt)}
                     </Link>
-                    <RequestStatusBadge status={r.status} />
+                    <RequestStatusBadge status={r.status} module={pf ? 'pf' : 'pj'} />
                   </li>
                 ))}
               </ul>
@@ -186,7 +202,7 @@ export default function SupplierPage() {
                 <Select value={s.status} onChange={(e) => update.mutate({ status: e.target.value as SupplierStatus })}>
                   {SUPPLIER_STATUSES.map((st) => (
                     <option key={st} value={st}>
-                      {SUPPLIER_STATUS_LABELS[st]}
+                      {supplierStatusLabel(st, pf ? 'pf' : 'pj')}
                     </option>
                   ))}
                 </Select>

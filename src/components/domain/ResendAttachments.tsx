@@ -52,7 +52,7 @@ function ResendBox<T>({ items, codPes, endpoint, onDone }: { items: PendingItem[
       <ConfirmDialog
         open={confirm}
         title="Reenviar anexos ao UAU?"
-        description={`Os ${items.length} arquivo(s) acima vão para a pessoa ${codPes} no UAU de produção, na pasta do fornecedor.`}
+        description={`Os ${items.length} arquivo(s) acima vão para a pessoa ${codPes} no UAU de produção, na pasta de anexos dela.`}
         confirmLabel="Reenviar anexos"
         loading={m.isPending}
         onConfirm={() => m.mutate()}

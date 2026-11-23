@@ -23,6 +23,19 @@ export const ACCOUNT_TYPES = { 0: 'Conta corrente', 1: 'Conta poupança', 3: 'Co
 /** Tipos de chave Pix (guardados no app; a gravação no UAU depende de teste, ver docs/API_UAU.md). */
 export const PIX_TYPES = { cpf_cnpj: 'CPF/CNPJ', celular: 'Celular', email: 'E-mail', aleatoria: 'Chave aleatória' } as const
 
+/** Dados de pessoa física (módulo Pessoas Físicas/PF). */
+export const SEXES = { M: 'Masculino', F: 'Feminino' } as const
+export type Sex = keyof typeof SEXES
+export const MARITAL_STATUSES = {
+  solteiro: 'Solteiro(a)',
+  casado: 'Casado(a)',
+  uniao_estavel: 'União estável',
+  separado: 'Separado(a)',
+  divorciado: 'Divorciado(a)',
+  viuvo: 'Viúvo(a)',
+} as const
+export type MaritalStatus = keyof typeof MARITAL_STATUSES
+
 const text = (max: number) => z.string().trim().max(max)
 const optionalText = (max: number) => text(max).optional().transform((v) => v || null).nullable()
 
@@ -51,6 +64,16 @@ export const pixSchema = z.object({
   key: text(77).min(1),
 })
 
+export const personSchema = z.object({
+  birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Informe a data de nascimento'),
+  sex: z.enum(['M', 'F'], { errorMap: () => ({ message: 'Informe o sexo' }) }),
+  maritalStatus: z.enum(Object.keys(MARITAL_STATUSES) as [MaritalStatus, ...MaritalStatus[]], { errorMap: () => ({ message: 'Informe o estado civil' }) }),
+  rgNumber: z.string().trim().min(3, 'Informe o número do RG').max(20),
+  rgIssuer: z.string().trim().min(2, 'Informe o órgão emissor').max(20),
+  rgUf: z.enum(UFS, { errorMap: () => ({ message: 'UF do RG inválida' }) }),
+})
+export type PersonData = z.infer<typeof personSchema>
+
 export const supplierProfileSchema = z
   .object({
     document: z.string().transform(onlyDigits),
@@ -68,10 +91,13 @@ export const supplierProfileSchema = z
     address: addressSchema,
     bank: bankSchema.nullable(),
     pix: pixSchema.nullable(),
+    /** Só pessoa física (CPF): nascimento, sexo, estado civil e RG */
+    person: personSchema.nullable().optional(),
   })
   .superRefine((v, ctx) => {
     const ok = v.document.length === 14 ? isValidCnpj(v.document) : v.document.length === 11 ? isValidCpf(v.document) : false
     if (!ok) ctx.addIssue({ code: 'custom', path: ['document'], message: 'CNPJ/CPF inválido' })
+    if (v.document.length === 11 && !v.person) ctx.addIssue({ code: 'custom', path: ['person'], message: 'Informe nascimento, sexo, estado civil e RG' })
   })
 
 export type SupplierProfile = z.infer<typeof supplierProfileSchema>

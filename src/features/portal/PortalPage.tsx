@@ -8,8 +8,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, LockKeyhole, Mail, Save, Send } from 'lucide-react'
 import type { PortalDataDTO, PortalStateDTO } from '@shared/contracts'
 import { documentChecklist } from '@shared/domain/documents'
-import { STATUS_LABELS } from '@shared/domain/request/status'
-import { ACCOUNT_TYPES, PIX_TYPES, supplierProfileSchema, UFS } from '@shared/domain/supplier'
+import { moduleOfKind, type Module } from '@shared/domain/modules'
+import { statusLabel, terms } from '@shared/domain/terms'
+import { useShowModule } from '@/app/module'
+import { ACCOUNT_TYPES, MARITAL_STATUSES, PIX_TYPES, SEXES, supplierProfileSchema, UFS } from '@shared/domain/supplier'
 import logo from '@/assets/brand/logo-unita.png'
 import logoWhite from '@/assets/brand/logo-unita-white.png'
 import { DocumentList, type UploadValues } from '@/components/domain/DocumentList'
@@ -17,15 +19,17 @@ import { Alert, Button, Card, CardBody, CardHeader, Field, Input, Select, Skelet
 import { api, ApiError, errorMessage, upload } from '@/lib/api'
 import { formatDateTime, formatDocument } from '@/utils/format'
 
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
 type Profile = Record<string, unknown> & { address?: Record<string, unknown>; bank?: Record<string, unknown> | null; pix?: Record<string, unknown> | null }
 
-function Shell({ children }: { children: ReactNode }) {
+function Shell({ children, module = 'pj' }: { children: ReactNode; module?: Module }) {
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b-2 border-primary bg-secondary">
         <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4">
           <img src={logoWhite} alt="Unità Engenharia" className="h-8" />
-          <span className="text-sm text-ink-300">Cadastro de fornecedor</span>
+          <span className="text-sm text-ink-300">{cap(terms(module).registration)}</span>
         </div>
       </header>
       <main className="mx-auto max-w-5xl px-4 py-8">{children}</main>
@@ -88,6 +92,9 @@ function ProfileForm({ data, onSaved }: { data: PortalDataDTO; onSaved: (d: Port
 
   const set = (k: string, v: unknown) => setP((x) => ({ ...x, [k]: v }))
   const setAddr = (k: string, v: string) => setP((x) => ({ ...x, address: { ...(x.address ?? {}), [k]: v } }))
+  // Pessoa física: nascimento, sexo, estado civil e RG (vão para o UAU)
+  const person = (p.person ?? {}) as Record<string, string>
+  const setPerson = (k: string, v: string) => setP((x) => ({ ...x, person: { ...((x.person as object) ?? {}), [k]: v } }))
   const setBank = (k: string, v: unknown) => setP((x) => ({ ...x, bank: { ...(x.bank ?? { accountType: 0 }), [k]: v } }))
 
   const parsed = useMemo(() => supplierProfileSchema.safeParse({ ...p, document: data.document }), [p, data.document])
@@ -121,7 +128,7 @@ function ProfileForm({ data, onSaved }: { data: PortalDataDTO; onSaved: (d: Port
 
   return (
     <Card>
-      <CardHeader title="1. Dados cadastrais" description="Conferimos com a Receita Federal; ajuste o que estiver diferente." actions={data.canEdit && <Button size="sm" icon={<Save className="size-4" />} loading={save.isPending} onClick={() => (setTouched(true), save.mutate())}>Salvar rascunho</Button>} />
+      <CardHeader title="1. Dados cadastrais" description={data.personKind === 'PF' ? 'Preencha seus dados pessoais; eles vão para o cadastro da Unità.' : 'Conferimos com a Receita Federal; ajuste o que estiver diferente.'} actions={data.canEdit && <Button size="sm" icon={<Save className="size-4" />} loading={save.isPending} onClick={() => (setTouched(true), save.mutate())}>Salvar rascunho</Button>} />
       <CardBody className="space-y-6">
         <fieldset disabled={disabled} className="grid gap-4 sm:grid-cols-2">
           <Field label={data.personKind === 'PJ' ? 'CNPJ' : 'CPF'}>
@@ -130,6 +137,51 @@ function ProfileForm({ data, onSaved }: { data: PortalDataDTO; onSaved: (d: Port
           <Field label={data.personKind === 'PJ' ? 'Razão social' : 'Nome completo'} required error={err('legalName')}>
             <Input value={String(p.legalName ?? '')} onChange={(e) => set('legalName', e.target.value)} />
           </Field>
+          {data.personKind === 'PF' && (
+            <>
+              <Field label="Data de nascimento" required error={err('person.birthDate') ?? err('person')}>
+                <Input type="date" value={person.birthDate ?? ''} onChange={(e) => setPerson('birthDate', e.target.value)} />
+              </Field>
+              <Field label="Sexo" required error={err('person.sex')}>
+                <Select value={person.sex ?? ''} onChange={(e) => setPerson('sex', e.target.value)}>
+                  <option value="">Escolha…</option>
+                  {Object.entries(SEXES).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Estado civil" required error={err('person.maritalStatus')}>
+                <Select value={person.maritalStatus ?? ''} onChange={(e) => setPerson('maritalStatus', e.target.value)}>
+                  <option value="">Escolha…</option>
+                  {Object.entries(MARITAL_STATUSES).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="RG (número)" required error={err('person.rgNumber')}>
+                <Input value={person.rgNumber ?? ''} onChange={(e) => setPerson('rgNumber', e.target.value)} />
+              </Field>
+              <div className="grid grid-cols-[1fr_96px] gap-2">
+                <Field label="Órgão emissor" required error={err('person.rgIssuer')}>
+                  <Input value={person.rgIssuer ?? ''} onChange={(e) => setPerson('rgIssuer', e.target.value)} placeholder="SSP" />
+                </Field>
+                <Field label="UF do RG" required error={err('person.rgUf')}>
+                  <Select value={person.rgUf ?? ''} onChange={(e) => setPerson('rgUf', e.target.value)}>
+                    <option value="">UF</option>
+                    {UFS.map((u) => (
+                      <option key={u} value={u}>
+                        {u}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+            </>
+          )}
           {data.personKind === 'PJ' && (
             <>
               <Field label="Nome fantasia">
@@ -295,10 +347,14 @@ export default function PortalPage() {
   const ready = state.data?.stage === 'ready'
   const data = useQuery({ queryKey: ['portal-data'], queryFn: () => api<PortalDataDTO>('/portal/me'), enabled: ready, retry: false })
   const setData = (d: PortalDataDTO) => qc.setQueryData(['portal-data'], d)
+  // PF fala de "pessoa", não de "fornecedor" (também nos componentes de documentos)
+  const module = moduleOfKind(data.data?.personKind ?? state.data?.personKind ?? 'PJ')
+  useShowModule(state.data ? module : null)
+  const t = terms(module)
 
   if (state.isLoading)
     return (
-      <Shell>
+      <Shell module={module}>
         <div className="flex justify-center py-20 text-primary">
           <Spinner />
         </div>
@@ -306,17 +362,17 @@ export default function PortalPage() {
     )
   if (state.isError)
     return (
-      <Shell>
+      <Shell module={module}>
         <Alert tone="error" title="Link indisponível" className="mx-auto max-w-lg">
           {errorMessage(state.error)}
         </Alert>
       </Shell>
     )
-  if (!ready) return <Shell>{state.data && <CodeStep token={token} state={state.data} onVerified={() => void state.refetch()} />}</Shell>
+  if (!ready) return <Shell module={module}>{state.data && <CodeStep token={token} state={state.data} onVerified={() => void state.refetch()} />}</Shell>
   if (data.isError) {
     const expired = data.error instanceof ApiError && data.error.status === 401
     return (
-      <Shell>
+      <Shell module={module}>
         <Alert tone="error" className="mx-auto max-w-lg">
           {expired ? 'Sua sessão expirou. Recarregue a página para receber um novo código.' : errorMessage(data.error)}
         </Alert>
@@ -325,18 +381,18 @@ export default function PortalPage() {
   }
   if (!data.data)
     return (
-      <Shell>
+      <Shell module={module}>
         <Skeleton className="h-96" />
       </Shell>
     )
   const d = data.data
 
   return (
-    <Shell>
+    <Shell module={module}>
       <p className="text-xs font-semibold tracking-wider text-primary uppercase">Solicitação nº {d.requestNumber}</p>
       <h1 className="mt-1 text-2xl font-semibold tracking-tight">{state.data?.companyName}</h1>
       <p className="mt-1 text-sm text-text-muted">
-        Cadastro de fornecedor · {d.modelName} · situação: <b>{STATUS_LABELS[d.status]}</b>
+        {cap(t.registration)} · {d.modelName} · situação: <b>{statusLabel(d.status, module)}</b>
       </p>
 
       <div className="mt-6 space-y-6">
@@ -347,7 +403,7 @@ export default function PortalPage() {
         )}
         {!d.canEdit && (
           <Alert tone="success" title="Cadastro enviado">
-            Recebemos seus dados {d.submittedAt ? `em ${formatDateTime(d.submittedAt)}` : ''}. A equipe de suprimentos vai analisar e, se precisar de algo, você recebe um novo e-mail.
+            Recebemos seus dados {d.submittedAt ? `em ${formatDateTime(d.submittedAt)}` : ''}. {module === 'pf' ? 'A equipe da Unità' : 'A equipe de suprimentos'} vai analisar e, se precisar de algo, você recebe um novo e-mail.
           </Alert>
         )}
 
@@ -370,7 +426,7 @@ export default function PortalPage() {
         </Card>
 
         <p className="flex items-center justify-center gap-2 text-center text-xs text-text-muted">
-          <CheckCircle2 className="size-4 text-success" /> Seus dados são usados só para o cadastro de fornecedor da Unità Engenharia (LGPD).
+          <CheckCircle2 className="size-4 text-success" /> Seus dados são usados só para o {t.registration} da Unità Engenharia (LGPD).
         </p>
       </div>
     </Shell>

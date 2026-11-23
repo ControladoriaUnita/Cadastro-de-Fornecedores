@@ -6,8 +6,9 @@
  * Só entra quem foi cadastrado no Painel dev (por e-mail) e está ativo.
  */
 import { eq } from 'drizzle-orm'
-import { permissionsFor, type Permission, type RoleKey } from '../../shared/domain/roles'
-import { AppError, type Actor } from '../application/context'
+import { accessByModule, GLOBAL_DEV_ROLE_KEY, memberModules, type Module } from '../../shared/domain/modules'
+import type { RoleKey } from '../../shared/domain/roles'
+import { AppError, scopeActor, type Actor } from '../application/context'
 import type { Db } from './db/client'
 import { schema } from './db/client'
 import { envOption, envValue, isProduction } from './env'
@@ -27,22 +28,32 @@ export function devLoginAllowed() {
 
 /** Cargos cadastrados (chave → nome e permissões). */
 export async function loadRoleCatalog(db: Db) {
-  return db.select({ key: schema.roles.key, name: schema.roles.name, permissions: schema.roles.permissions }).from(schema.roles)
+  return db.select({ key: schema.roles.key, name: schema.roles.name, permissions: schema.roles.permissions, module: schema.roles.module }).from(schema.roles)
 }
 
-export async function loadActor(db: Db, userId: string): Promise<Actor | null> {
+/** Usuário com as permissões de cada módulo; já recortado para `module` (padrão: Fornecedores/PJ). */
+export async function loadActor(db: Db, userId: string, module: Module = 'pj'): Promise<Actor | null> {
   const [[u], catalog] = await Promise.all([db.select().from(schema.users).where(eq(schema.users.id, userId)), loadRoleCatalog(db)])
   if (!u || !u.active) return null
   const roles = u.roles as RoleKey[]
   const names = new Map(catalog.map((r) => [r.key, r.name]))
-  return {
-    id: u.id,
-    fullName: u.fullName,
-    email: u.email,
-    roles,
-    roleNames: roles.map((r) => names.get(r) ?? r),
-    permissions: permissionsFor(roles, catalog as { key: string; permissions: Permission[] }[]),
-  }
+  const access = accessByModule(roles, catalog)
+  const memberOf = memberModules(roles, catalog)
+  return scopeActor(
+    {
+      id: u.id,
+      fullName: u.fullName,
+      email: u.email,
+      roles,
+      roleNames: roles.map((r) => names.get(r) ?? r),
+      permissions: [],
+      modules: [],
+      access,
+      memberOf,
+      globalDev: roles.includes(GLOBAL_DEV_ROLE_KEY),
+    },
+    module,
+  )
 }
 
 export function issueStaffSession(userId: string) {

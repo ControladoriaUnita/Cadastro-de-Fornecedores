@@ -41,6 +41,11 @@ export const roles = pgTable('roles', {
   name: text('name').notNull(),
   description: text('description'),
   permissions: text('permissions').array().notNull().default(sql`'{}'::text[]`),
+  /**
+   * Módulo do cargo: pj (Fornecedores/PJ) ou pf (Pessoas Físicas/PF). Cada módulo tem cargos,
+   * usuários e Painel dev próprios. null = Dev geral (acesso total aos dois módulos).
+   */
+  module: text('module'),
   /** Cargo de sistema (dev): não pode ser apagado nem perder permissões */
   system: boolean('system').notNull().default(false),
   createdAt: createdAt(),
@@ -58,6 +63,8 @@ export const documentTypes = pgTable('document_types', {
   defaultValidityDays: integer('default_validity_days'),
   active: boolean('active').notNull().default(true),
   sort: integer('sort').notNull().default(0),
+  /** Módulo dono do tipo (cada módulo tem a sua lista no Painel dev) */
+  module: text('module').notNull().default('pj'),
   createdAt: createdAt(),
 })
 

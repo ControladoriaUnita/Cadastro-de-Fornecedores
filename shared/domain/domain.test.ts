@@ -207,7 +207,7 @@ describe('Base de fornecedores do UAU', () => {
   it('lê só pessoa jurídica ativa e nunca a senha', () => {
     const s = mapUauPerson(pj(10, '11.222.333/0001-81'))
     expect(s).toEqual({ codPes: 10, document: '11222333000181', legalName: 'EMPRESA X', tradeName: null, email: 'compras@x.com.br' })
-    expect(mapUauPerson(pj(11, '52998224725', { TipoPessoa: 0 }))).toBe('pessoa_fisica')
+    expect(mapUauPerson(pj(11, '52998224725', { TipoPessoa: 0 }))).toBe('outro_tipo')
     expect(mapUauPerson(pj(12, '11222333000181', { AtivoInativo: 1 }))).toBe('inativa')
     expect(mapUauPerson(pj(13, '123'))).toBe('invalida')
   })
@@ -218,7 +218,17 @@ describe('Base de fornecedores do UAU', () => {
   it('tira CNPJ repetido ficando com o código mais recente', () => {
     const r = selectUauSuppliers([pj(5, '11222333000181'), pj(9, '11222333000181'), pj(7, '11222333000181'), pj(8, '52998224725', { TipoPessoa: 0 })])
     expect(r.suppliers.map((s) => s.codPes)).toEqual([9])
-    expect(r.skipped).toMatchObject({ duplicada: 2, pessoa_fisica: 1 })
+    expect(r.skipped).toMatchObject({ duplicada: 2, outro_tipo: 1 })
+  })
+  it('módulo PF: lê só pessoa física ativa com CPF válido (sem nome fantasia)', () => {
+    const pf = (cod: number, cpf: string, extra: Record<string, unknown> = {}) => pj(cod, cpf, { TipoPessoa: 0, NomeFantasia: 'APELIDO', ...extra })
+    expect(mapUauPerson(pf(20, '529.982.247-25'), 'PF')).toEqual({ codPes: 20, document: '52998224725', legalName: 'EMPRESA X', tradeName: null, email: 'compras@x.com.br' })
+    expect(mapUauPerson(pj(21, '11222333000181'), 'PF')).toBe('outro_tipo')
+    expect(mapUauPerson(pf(22, '11111111111'), 'PF')).toBe('invalida')
+    expect(mapUauPerson(pf(23, '52998224725', { AtivoInativo: 1 }), 'PF')).toBe('inativa')
+    const r = selectUauSuppliers([pf(30, '52998224725'), pf(31, '52998224725'), pj(32, '11222333000181')], 'PF')
+    expect(r.suppliers.map((s) => s.codPes)).toEqual([31])
+    expect(r.skipped).toMatchObject({ duplicada: 1, outro_tipo: 1 })
   })
 })
 

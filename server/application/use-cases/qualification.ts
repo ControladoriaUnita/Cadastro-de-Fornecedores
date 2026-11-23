@@ -13,11 +13,11 @@ import type { RequestStatus } from '../../../shared/domain/request/status'
 import { PERMISSIONS } from '../../../shared/domain/roles'
 import type { Db } from '../../infrastructure/db/client'
 import { schema } from '../../infrastructure/db/client'
-import { AppError, notFound, requirePermission } from '../context'
+import { AppError, notFound, requireModule, requirePermission } from '../context'
 import type { UseCaseDeps } from '../ports'
 import { recordEvent } from '../shared'
 
-const { qualificationAnswers, qualificationQuestions, requests, users } = schema
+const { qualificationAnswers, qualificationQuestions, requests, suppliers, users } = schema
 
 /** Etapas em que Suprimentos ainda pode responder/alterar o formulário. */
 const EDITABLE: RequestStatus[] = ['solicitado', 'aguardando_fornecedor', 'em_analise', 'pendencias']
@@ -80,6 +80,10 @@ export async function saveQualification(deps: UseCaseDeps, requestId: string, in
   requirePermission(deps.ctx.actor, PERMISSIONS.requestAnalyze)
   const [r] = await deps.db.select().from(requests).where(eq(requests.id, requestId))
   if (!r) throw notFound('Solicitação')
+  const [sup] = await deps.db.select({ kind: suppliers.personKind }).from(suppliers).where(eq(suppliers.id, r.supplierId))
+  // Pessoas Físicas/PF não têm homologação (formulário de qualificação)
+  if (sup?.kind === 'PF') throw new AppError('NO_QUALIFICATION_PF', 'Pessoas físicas não têm formulário de qualificação.', 422)
+  requireModule(deps.ctx.actor, 'pj')
   if (!EDITABLE.includes(r.status as RequestStatus)) throw new AppError('QUALIFICATION_LOCKED', 'O formulário só pode ser alterado durante a análise.', 409)
 
   const questions = new Map((await deps.db.select().from(qualificationQuestions)).map((q) => [q.id, q]))

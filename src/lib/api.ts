@@ -4,6 +4,12 @@
  */
 import type { ApiErrorBody } from '@shared/contracts'
 
+/** Módulo da tela atual (o ModuleProvider atualiza). */
+let currentModule: 'pj' | 'pf' = 'pj'
+export const setApiModule = (m: 'pj' | 'pf') => {
+  currentModule = m
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -21,7 +27,8 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...init,
     credentials: 'same-origin',
-    headers: { 'x-requested-with': 'fornecedores', ...(init.headers ?? {}) },
+    // x-module: módulo da tela (os módulos são independentes; a API recorta as permissões por ele)
+    headers: { 'x-requested-with': 'fornecedores', 'x-module': currentModule, ...(init.headers ?? {}) },
   })
   const text = await res.text()
   let data: unknown = null

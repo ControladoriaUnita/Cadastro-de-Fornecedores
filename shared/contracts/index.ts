@@ -8,6 +8,7 @@ import type { ExpiryState, ReviewStatus } from '../domain/documents'
 import type { RequestAction } from '../domain/request/workflow'
 import { URGENCIES, type RequestStatus, type Urgency } from '../domain/request/status'
 import { SCORE_MAX, SCORE_MIN, type SupplierScores } from '../domain/evaluation'
+import { MODULES, type Module } from '../domain/modules'
 import { QUALIFICATION_ANSWERS, type QualificationItem } from '../domain/qualification'
 import { RISK_RULE_KEYS, RISK_SEVERITIES, type RiskFinding, type RiskLevel, type RiskRuleDefinition, type RiskSeverity } from '../domain/risk'
 import { ALL_PERMISSIONS, type Permission, type RoleKey } from '../domain/roles'
@@ -41,6 +42,12 @@ export interface UserDTO {
   roles: RoleKey[]
   roleNames: string[]
   permissions: Permission[]
+  /** Módulos em que a pessoa tem cargo (pj = Fornecedores/PJ, pf = Pessoas Físicas/PF) */
+  modules: Module[]
+  /** Permissões em cada módulo (os módulos são independentes) */
+  access: Record<Module, Permission[]>
+  /** Cargo Dev geral (os dois módulos) */
+  globalDev: boolean
 }
 
 export interface AuthConfigDTO {
@@ -201,7 +208,8 @@ export interface TeamUserDTO {
 export const teamUserSchema = z.object({
   fullName: z.string().trim().min(2).max(80),
   email: z.string().trim().toLowerCase().email().max(120),
-  roles: z.array(z.string().min(1).max(40)).min(1, 'Escolha ao menos um cargo').max(20),
+  /** Cargos NESTE módulo (vazio = tirar a pessoa do módulo) */
+  roles: z.array(z.string().min(1).max(40)).max(20),
   active: z.boolean().default(true),
 })
 
@@ -210,6 +218,8 @@ export interface RoleDTO {
   name: string
   description: string | null
   permissions: Permission[]
+  /** Módulo do cargo */
+  module: Module
   /** Cargo de sistema (dev): sempre com todas as permissões, não pode ser apagado */
   system: boolean
   /** Quantos usuários têm o cargo */
@@ -261,6 +271,8 @@ export interface DocumentLookupDTO {
 // ----------------------------------------------------------------------------- solicitações
 
 export const createRequestSchema = z.object({
+  /** Módulo em que a solicitação é aberta (pj = CNPJ, pf = CPF) */
+  module: z.enum(MODULES).default('pj'),
   document: documentNumberSchema,
   /** Opcional: no pré-cadastro da Obra, Suprimentos escolhe na triagem */
   modelId: z.string().uuid('Escolha o modelo de fornecedor').nullable().optional(),
@@ -284,6 +296,7 @@ export const inviteSchema = z.object({
 export interface RequestCardDTO {
   id: string
   number: number
+  module: Module
   status: RequestStatus
   urgency: Urgency
   supplierId: string
@@ -366,6 +379,8 @@ export interface InviteDTO {
 export interface RequestDetailDTO {
   id: string
   number: number
+  /** pj = Fornecedores/PJ · pf = Pessoas Físicas/PF (vem do documento) */
+  module: Module
   status: RequestStatus
   urgency: Urgency
   workName: string | null
@@ -502,7 +517,8 @@ export interface UauSyncDTO {
   read: number
   created: number
   updated: number
-  skipped: { pessoa_fisica: number; inativa: number; invalida: number; duplicada: number }
+  /** outro_tipo = pessoa do outro módulo (PF na importação PJ e vice-versa) */
+  skipped: { outro_tipo: number; inativa: number; invalida: number; duplicada: number }
 }
 
 export interface ImportResultDTO {
@@ -571,6 +587,8 @@ export interface PortalStateDTO {
   /** E-mail mascarado para onde o código foi/será enviado */
   emailHint: string
   companyName: string
+  /** Define o vocabulário do portal (PF não fala de fornecedor) */
+  personKind: 'PJ' | 'PF'
 }
 
 export interface PortalDataDTO {

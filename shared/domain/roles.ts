@@ -66,6 +66,8 @@ export interface RoleDefinition {
   name: string
   description: string
   permissions: Permission[]
+  /** Módulo do cargo (pj = Fornecedores/PJ, pf = Pessoas Físicas/PF); null = Dev geral */
+  module: 'pj' | 'pf' | null
 }
 
 const P = PERMISSIONS
@@ -77,20 +79,25 @@ export const DEFAULT_ROLES: RoleDefinition[] = [
     name: 'Obra',
     description: 'Faz o pré-cadastro do fornecedor, acompanha as próprias solicitações e avalia os fornecedores homologados.',
     permissions: [P.requestCreate, P.requestReadOwn, P.evaluationCreate],
+    module: 'pj',
   },
   {
     key: 'analista',
     name: 'Analista de suprimentos',
     description: 'Convida fornecedores, confere documentos e risco, envia para aprovação.',
     permissions: [P.requestCreate, P.requestReadOwn, P.requestReadAll, P.requestAnalyze, P.supplierRead, P.supplierManage, P.evaluationCreate, P.modelRead],
+    module: 'pj',
   },
   {
     key: 'aprovador',
     name: 'Aprovação',
     description: 'Tudo do analista, mais validar e gravar no UAU.',
     permissions: [P.requestCreate, P.requestReadOwn, P.requestReadAll, P.requestAnalyze, P.requestApprove, P.supplierRead, P.supplierManage, P.evaluationCreate, P.modelRead],
+    module: 'pj',
   },
-  { key: DEV_ROLE_KEY, name: 'Dev', description: 'Acesso total, inclusive configurações, usuários e cargos.', permissions: ALL_PERMISSIONS },
+  { key: DEV_ROLE_KEY, name: 'Dev geral', description: 'Acesso total aos dois módulos (Fornecedores/PJ e Pessoas Físicas/PF).', permissions: ALL_PERMISSIONS, module: null },
+  { key: 'dev-pj', name: 'Dev PJ', description: 'Acesso total ao módulo Fornecedores/PJ, inclusive o Painel dev do módulo.', permissions: ALL_PERMISSIONS, module: 'pj' },
+  { key: 'dev-pf', name: 'Dev PF', description: 'Acesso total ao módulo Pessoas Físicas/PF, inclusive o Painel dev do módulo.', permissions: ALL_PERMISSIONS, module: 'pf' },
 ]
 
 /** Soma as permissões dos cargos do usuário. O cargo dev sempre vale tudo. */

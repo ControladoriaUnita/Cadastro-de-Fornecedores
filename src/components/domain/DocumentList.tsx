@@ -9,6 +9,8 @@ import { ACCEPTED_MIME, MAX_FILE_BYTES } from '@shared/domain/documents'
 import { Badge, Button, Field, Input } from '@/components/ui'
 import { formatBytes, formatDate, formatDateTime } from '@/utils/format'
 import { cn } from '@/utils/cn'
+import { terms } from '@shared/domain/terms'
+import { useModule } from '@/app/module'
 import { ExpiryBadge, ReviewBadge } from './badges'
 
 export interface UploadValues {
@@ -94,6 +96,7 @@ function UploadRow({ req, onUpload }: { req: RequirementDTO; onUpload: NonNullab
 }
 
 export function DocumentList({ requirements, documents, fileUrl, onUpload, renderActions, extraDocuments }: Props) {
+  const module = useModule()
   const latest = new Map<string, DocumentDTO>()
   for (const d of documents) if (!d.replaced) latest.set(d.documentTypeId, d)
   const extras = extraDocuments ? documents.filter((d) => !d.replaced && !requirements.some((r) => r.documentTypeId === d.documentTypeId)) : []
@@ -118,7 +121,7 @@ export function DocumentList({ requirements, documents, fileUrl, onUpload, rende
                       <Eye className="size-4" aria-hidden /> {doc.fileName}
                     </a>
                     <span className="text-text-muted">
-                      {formatBytes(doc.size)} · enviado {formatDateTime(doc.createdAt)} {doc.uploadedBy === 'supplier' ? 'pelo fornecedor' : 'pela equipe'}
+                      {formatBytes(doc.size)} · enviado {formatDateTime(doc.createdAt)} {doc.uploadedBy === 'supplier' ? terms(module).byPerson : 'pela equipe'}
                     </span>
                     <ReviewBadge status={doc.reviewStatus} />
                     <ExpiryBadge state={doc.expiry} />

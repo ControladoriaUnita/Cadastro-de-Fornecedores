@@ -33,3 +33,20 @@ Testada com a empresa fictícia `TESTE INTEGRACAO APP FORNECEDORES LTDA` (CNPJ 9
 ## Importação da base de fornecedores
 
 O UAU não marca quem é fornecedor. O app (Fornecedores → Importar do UAU → Base inteira) lê `Pessoas/ConsultarPessoasPorCondicao` em faixas de 500 códigos (`cod_pes > N and cod_pes <= N+500`) até 4.000 códigos seguidos sem ninguém, e fica com as **pessoas jurídicas ativas** (TipoPessoa 1, CNPJ de 14 dígitos, AtivoInativo 0). CNPJ repetido no UAU: fica o maior código. Só nome, fantasia, CNPJ, e-mail e código são lidos (a resposta traz `SenhaLoginPessoa`). Regras em [`shared/domain/uau-suppliers.ts`](../shared/domain/uau-suppliers.ts); rota `POST /api/suppliers/uau-sync`, em etapas de ~8 s que o navegador encadeia. Em 11/2026: 8.751 pessoas, 5.653 CNPJs de empresas ativas, leitura completa em 30 s a 2,5 min.
+
+No módulo **Pessoas Físicas/PF** (Pessoas → Importar do UAU) a mesma leitura fica com as **pessoas físicas ativas** (TipoPessoa 0, CPF válido, AtivoInativo 0), gravadas como PF e visíveis só no módulo PF. Em 23/11/2026: 8.766 pessoas lidas, 3.087 pessoas físicas importadas (1 inativa e 1 CPF repetido ignorados).
+
+## Pessoa física (módulo Pessoas Físicas/PF)
+
+Mesmo `Pessoas/GravarPessoa`, com `tipo_pes = 0`. A ficha do portal pede nascimento, sexo, estado civil e RG:
+
+| Ficha | UAU |
+|---|---|
+| Data de nascimento | `info_pes.dtnasc_pes` |
+| Sexo | `info_pesfis.sexo_pf` — **códigos a confirmar no teste real** (`UAU_SEX_CODES`: M=0, F=1) |
+| Estado civil | `info_pesfis.estciv_pf` — **códigos a confirmar** (`UAU_MARITAL_CODES`); união estável também marca `uniaoestavel_pf` |
+| RG (número) | `info_pesfis.doc_pf` com `tdoc_pf = "RG"` (o UAU guarda o PIS do mesmo jeito em funcionários) |
+| RG (órgão e UF) | guardados no app; ir para o UAU depende do código de `infopes_doc.tipo_doc` (a confirmar) |
+
+As listas de códigos de sexo e estado civil não estão na documentação da API: depois da primeira gravação real de PF,
+abrir a pessoa na tela do UAU, conferir e ajustar `shared/domain/uau-payload.ts` se preciso.

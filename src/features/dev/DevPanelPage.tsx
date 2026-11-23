@@ -10,6 +10,8 @@ import { api, errorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDateTime } from '@/utils/format'
 import { RolesManager, UsersManager } from './AccessManagement'
+import { useModule } from '@/app/module'
+import { MODULE_INFO, type Module } from '@shared/domain/modules'
 
 type Tab = 'diag' | 'users' | 'roles' | 'works' | 'types' | 'qualification' | 'criteria' | 'risk' | 'outbox'
 
@@ -64,8 +66,9 @@ function Diagnostics() {
 }
 
 function DocumentTypes() {
+  const module = useModule()
   const qc = useQueryClient()
-  const q = useQuery({ queryKey: ['document-types'], queryFn: () => api<DocumentTypeDTO[]>('/document-types') })
+  const q = useQuery({ queryKey: ['document-types', module], queryFn: () => api<DocumentTypeDTO[]>('/document-types') })
   const [edit, setEdit] = useState<DocumentTypeDTO | 'new' | null>(null)
   const [form, setForm] = useState({ name: '', description: '', hasExpiry: false, defaultValidityDays: '' as string, active: true, sort: 0 })
   const open = (t: DocumentTypeDTO | 'new') => {
@@ -401,7 +404,8 @@ function RiskRules() {
 }
 
 function Outbox() {
-  const q = useQuery({ queryKey: ['outbox'], queryFn: () => api<OutboxItemDTO[]>('/dev/outbox'), refetchInterval: 15_000 })
+  const module = useModule()
+  const q = useQuery({ queryKey: ['outbox', module], queryFn: () => api<OutboxItemDTO[]>('/dev/outbox'), refetchInterval: 15_000 })
   const [open, setOpen] = useState<OutboxItemDTO | null>(null)
   return (
     <Card>
@@ -442,25 +446,30 @@ function Outbox() {
   )
 }
 
-const TABS: { key: Tab; label: string; permission: Permission }[] = [
+/** Abas de cada Painel dev: só o PJ tem obras, qualificação, critérios e regras de risco. */
+const TABS: { key: Tab; label: string; permission: Permission; pjOnly?: boolean }[] = [
   { key: 'users', label: 'Usuários', permission: PERMISSIONS.usersManage },
   { key: 'roles', label: 'Cargos e permissões', permission: PERMISSIONS.usersManage },
-  { key: 'works', label: 'Obras', permission: PERMISSIONS.settingsManage },
+  { key: 'works', label: 'Obras', permission: PERMISSIONS.settingsManage, pjOnly: true },
   { key: 'types', label: 'Tipos de documento', permission: PERMISSIONS.settingsManage },
-  { key: 'qualification', label: 'Formulário de qualificação', permission: PERMISSIONS.settingsManage },
-  { key: 'criteria', label: 'Critérios de avaliação', permission: PERMISSIONS.settingsManage },
-  { key: 'risk', label: 'Regras de risco', permission: PERMISSIONS.settingsManage },
+  { key: 'qualification', label: 'Formulário de qualificação', permission: PERMISSIONS.settingsManage, pjOnly: true },
+  { key: 'criteria', label: 'Critérios de avaliação', permission: PERMISSIONS.settingsManage, pjOnly: true },
+  { key: 'risk', label: 'Regras de risco', permission: PERMISSIONS.settingsManage, pjOnly: true },
   { key: 'diag', label: 'Diagnóstico', permission: PERMISSIONS.devPanel },
   { key: 'outbox', label: 'E-mails', permission: PERMISSIONS.devPanel },
 ]
 
-export default function DevPanelPage() {
+export default function DevPanelPage({ module = 'pj' }: { module?: Module }) {
   const { can } = useAuth()
-  const tabs = TABS.filter((t) => can(t.permission))
+  const tabs = TABS.filter((t) => can(t.permission) && (module === 'pj' || !t.pjOnly))
   const [tab, setTab] = useState<Tab>(tabs[0]?.key ?? 'users')
   return (
     <>
-      <PageHeader eyebrow="Painel dev" title="Administração" description="Usuários, cargos e permissões, catálogos, regras e integrações. Modelos de fornecedor ficam na aba Modelos." />
+      <PageHeader
+        eyebrow={`Painel dev · ${MODULE_INFO[module].label}`}
+        title="Administração"
+        description={`Usuários, cargos e permissões${module === 'pj' ? ', catálogos, regras' : ', tipos de documento'} e integrações do módulo ${MODULE_INFO[module].label}. Os modelos ficam na aba Modelos.`}
+      />
       <Tabs<Tab> sticky value={tab} onChange={setTab} items={tabs.map(({ key, label }) => ({ key, label }))} />
       <div className="mt-6">
         {tab === 'users' && <UsersManager />}

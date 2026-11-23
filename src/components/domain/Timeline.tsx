@@ -2,12 +2,12 @@
  * Histórico da solicitação (append-only).
  */
 import type { EventDTO } from '@shared/contracts'
-import { STATUS_LABELS } from '@shared/domain/request/status'
+import { statusLabel, terms } from '@shared/domain/terms'
+import { useModule } from '@/app/module'
 import { formatDateTime } from '@/utils/format'
 
 const KIND_LABELS: Record<string, string> = {
   created: 'Abriu a solicitação',
-  invite: 'Enviou o convite ao fornecedor',
   cancel: 'Cancelou',
   reject: 'Recusou',
   supplier_submit: 'Enviou dados e documentos',
@@ -24,15 +24,17 @@ const KIND_LABELS: Record<string, string> = {
 }
 
 export function Timeline({ events }: { events: EventDTO[] }) {
+  const module = useModule()
+  const label = (kind: string) => (kind === 'invite' ? `Enviou o convite ${terms(module).toPerson}` : (KIND_LABELS[kind] ?? kind))
   return (
     <ol className="relative space-y-4 border-l border-border pl-5">
       {events.map((e) => (
         <li key={e.id} className="relative">
           <span className="absolute top-1.5 -left-[25px] size-2.5 rounded-full border-2 border-surface bg-primary" aria-hidden />
           <p className="text-sm">
-            <span className="font-medium text-text">{e.actorLabel}</span> <span className="text-ink-700">{KIND_LABELS[e.kind] ?? e.kind}</span>
+            <span className="font-medium text-text">{e.actorLabel}</span> <span className="text-ink-700">{label(e.kind)}</span>
             {typeof e.payload?.fileName === 'string' && <span className="text-text-muted"> · {e.payload.fileName}</span>}
-            {e.toStatus && e.fromStatus !== e.toStatus && <span className="text-text-muted"> → {STATUS_LABELS[e.toStatus]}</span>}
+            {e.toStatus && e.fromStatus !== e.toStatus && <span className="text-text-muted"> → {statusLabel(e.toStatus, module)}</span>}
           </p>
           <p className="text-xs text-text-muted">{formatDateTime(e.at)}</p>
           {e.comment && <p className="mt-1 rounded-control bg-ink-50 px-3 py-2 text-sm text-ink-700">{e.comment}</p>}

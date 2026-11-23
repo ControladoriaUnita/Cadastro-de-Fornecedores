@@ -4,10 +4,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, CircleAlert, ExternalLink, Mail, ShieldCheck, X } from 'lucide-react'
 import type { DocumentDTO, ModelDTO, RequestDetailDTO } from '@shared/contracts'
 import { personKindOf } from '@shared/domain/document-number'
-import { STATUS_DESCRIPTIONS } from '@shared/domain/request/status'
+import { actionLabel, statusDescription, terms } from '@shared/domain/terms'
 import { ACTIONS, type RequestAction } from '@shared/domain/request/workflow'
 import { PERMISSIONS } from '@shared/domain/roles'
-import { PATHS } from '@/app/navigation'
+import { useModule, useShowModule } from '@/app/module'
+import { MODULE_PATHS, PATHS } from '@/app/navigation'
 import { CompanyCard } from '@/components/domain/CompanyCard'
 import { DocumentList, type UploadValues } from '@/components/domain/DocumentList'
 import { ProfileView } from '@/components/domain/ProfileView'
@@ -35,12 +36,14 @@ const ACTION_ENDPOINT: Partial<Record<RequestAction, string>> = {
 
 function ActionDialog({ action, detail, onClose, onDone }: { action: RequestAction; detail: RequestDetailDTO; onClose: () => void; onDone: (r: RequestDetailDTO) => void }) {
   const rule = ACTIONS[action]
+  const t = terms(detail.module)
+  const label = actionLabel(action, detail.module)
   const [comment, setComment] = useState('')
   const [email, setEmail] = useState(detail.contactEmail)
   // Triagem: Suprimentos escolhe o modelo (documentos exigidos) ao enviar o formulário
   const [modelId, setModelId] = useState(detail.model?.id ?? '')
   const kind = personKindOf(detail.supplier.document)
-  const models = useQuery({ queryKey: ['models', 'active'], queryFn: () => api<ModelDTO[]>('/models?active=1'), enabled: action === 'invite' })
+  const models = useQuery({ queryKey: ['models', 'active', detail.module], queryFn: () => api<ModelDTO[]>(`/models?active=1&module=${detail.module}`), enabled: action === 'invite' })
   const modelOptions = (models.data ?? []).filter((m) => m.personKind === 'ambos' || m.personKind === kind)
   const m = useMutation({
     mutationFn: () =>
@@ -56,7 +59,7 @@ function ActionDialog({ action, detail, onClose, onDone }: { action: RequestActi
     <Dialog
       open
       onClose={onClose}
-      title={rule.label}
+      title={label}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} className="mr-auto">
@@ -68,7 +71,7 @@ function ActionDialog({ action, detail, onClose, onDone }: { action: RequestActi
             disabled={(!!rule.commentRequired && !comment.trim()) || (action === 'invite' && !modelId)}
             onClick={() => m.mutate()}
           >
-            {rule.label}
+            {label}
           </Button>
         </>
       }
@@ -76,8 +79,8 @@ function ActionDialog({ action, detail, onClose, onDone }: { action: RequestActi
       <div className="space-y-4">
         {action === 'invite' && (
           <>
-            <p>O fornecedor recebe um link pessoal (válido por 15 dias) para preencher os dados e enviar os documentos. Um link anterior deixa de valer.</p>
-            <Field label="Modelo de fornecedor" required hint="Define quais documentos o fornecedor vai enviar.">
+            <p>{t.ThePerson} recebe um link pessoal (válido por 15 dias) para preencher os dados e enviar os documentos. Um link anterior deixa de valer.</p>
+            <Field label={`Modelo de ${t.person}`} required hint={`Define quais documentos ${t.thePerson} vai enviar.`}>
               <Select value={modelId} onChange={(e) => setModelId(e.target.value)}>
                 <option value="">Escolha…</option>
                 {modelOptions.map((o) => (
@@ -87,12 +90,12 @@ function ActionDialog({ action, detail, onClose, onDone }: { action: RequestActi
                 ))}
               </Select>
             </Field>
-            <Field label="E-mail do fornecedor" required>
+            <Field label={`E-mail ${t.ofPerson}`} required>
               <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             </Field>
           </>
         )}
-        {action === 'request_changes' && <p>O fornecedor recebe um novo link com o texto abaixo e pode corrigir dados e reenviar documentos.</p>}
+        {action === 'request_changes' && <p>{t.ThePerson} recebe um novo link com o texto abaixo e pode corrigir dados e reenviar documentos.</p>}
         {action === 'send_to_approval' && <p>Confere documentos, ficha e risco e envia para quem aprova a gravação no UAU.</p>}
         {action !== 'send_to_approval' && (
           <Field label={action === 'invite' ? 'Mensagem (opcional)' : rule.commentRequired ? 'Motivo' : 'Comentário (opcional)'} required={rule.commentRequired}>
@@ -117,6 +120,7 @@ function ActionDialog({ action, detail, onClose, onDone }: { action: RequestActi
 }
 
 function ReviewDialog({ doc, requestId, approve, onClose, onDone }: { doc: DocumentDTO; requestId: string; approve: boolean; onClose: () => void; onDone: (r: RequestDetailDTO) => void }) {
+  const t = terms(useModule())
   const [note, setNote] = useState('')
   const [issuedAt, setIssuedAt] = useState(doc.issuedAt ?? '')
   const [expiresAt, setExpiresAt] = useState(doc.expiresAt ?? '')
@@ -156,7 +160,7 @@ function ReviewDialog({ doc, requestId, approve, onClose, onDone }: { doc: Docum
             </Field>
           </div>
         )}
-        <Field label={approve ? 'Observação (opcional)' : 'Motivo (o fornecedor vai ver)'} required={!approve}>
+        <Field label={approve ? 'Observação (opcional)' : `Motivo (${t.thePerson} vai ver)`} required={!approve}>
           <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} />
         </Field>
         {m.isError && <Alert tone="error">{errorMessage(m.error)}</Alert>}
@@ -173,6 +177,8 @@ export default function RequestPage() {
   const [action, setAction] = useState<RequestAction | null>(null)
   const [review, setReview] = useState<{ doc: DocumentDTO; approve: boolean } | null>(null)
   const q = useQuery({ queryKey: ['request', id], queryFn: () => api<RequestDetailDTO>(`/requests/${id}`) })
+  // Menu e "voltar" seguem o módulo do registro (PJ/PF)
+  useShowModule(q.data?.module)
   const set = (r: RequestDetailDTO) => {
     qc.setQueryData(['request', id], r)
     void qc.invalidateQueries({ queryKey: ['requests'] })
@@ -184,6 +190,8 @@ export default function RequestPage() {
   if (q.isError || !q.data) return <Alert tone="error">{errorMessage(q.error)}</Alert>
   const d = q.data
   const analyze = can(PERMISSIONS.requestAnalyze)
+  // Pessoas Físicas/PF: sem formulário de qualificação, sem risco e sem dados da Receita
+  const pf = d.module === 'pf'
   const canReview = analyze && ['em_analise', 'pendencias', 'aguardando_fornecedor'].includes(d.status)
   const c = d.checklist
   const requirements = d.model?.requirements ?? []
@@ -195,16 +203,16 @@ export default function RequestPage() {
     <>
       <PageHeader
         eyebrow="Solicitações"
-        backTo={PATHS.requests}
+        backTo={MODULE_PATHS[d.module].requests}
         title={`nº ${d.number} · ${d.supplier.tradeName || d.supplier.legalName}`}
         meta={
           <>
-            <RequestStatusBadge status={d.status} />
+            <RequestStatusBadge status={d.status} module={d.module} />
             {d.urgency === 'alta' && <Badge tone="primary">Urgente</Badge>}
             {d.uauSimulated && <Badge tone="warning">Gravação simulada</Badge>}
           </>
         }
-        description={`${formatDocument(d.supplier.document)} · ${d.model?.name ?? 'Modelo a definir na triagem'} · ${STATUS_DESCRIPTIONS[d.status]}`}
+        description={`${formatDocument(d.supplier.document)} · ${d.model?.name ?? 'Modelo a definir na triagem'} · ${statusDescription(d.status, d.module)}`}
         actions={
           <>
             {buttons.map((a) => (
@@ -214,7 +222,7 @@ export default function RequestPage() {
                 icon={a === 'invite' ? <Mail className="size-4" /> : undefined}
                 onClick={() => setAction(a)}
               >
-                {a === 'invite' && d.status !== 'solicitado' ? 'Reenviar link' : ACTIONS[a].label}
+                {a === 'invite' && d.status !== 'solicitado' ? 'Reenviar link' : actionLabel(a, d.module)}
               </Button>
             ))}
             {d.status === 'aguardando_aprovacao' && analyze && (
@@ -239,9 +247,13 @@ export default function RequestPage() {
               onChange={setTab}
               items={[
                 { key: 'docs', label: 'Documentos', count: d.documents.length },
-                { key: 'qualification', label: 'Qualificação' },
-                { key: 'risk', label: 'Risco' },
-                { key: 'profile', label: 'Ficha do fornecedor' },
+                ...(pf
+                  ? []
+                  : [
+                      { key: 'qualification' as Tab, label: 'Qualificação' },
+                      { key: 'risk' as Tab, label: 'Risco' },
+                    ]),
+                { key: 'profile', label: pf ? 'Ficha da pessoa' : 'Ficha do fornecedor' },
                 ...(d.supplier.receita ? [{ key: 'company' as Tab, label: 'Receita Federal' }] : []),
                 { key: 'history', label: 'Histórico', count: d.events.length },
               ]}
@@ -321,16 +333,20 @@ export default function RequestPage() {
                   {c.expired.length > 0 && <li className="text-error">• {c.expired.length} vencido(s)</li>}
                 </ul>
               )}
-              <div className="flex items-center justify-between">
-                <span className="text-text-muted">Formulário de qualificação</span>
-                <Badge tone={d.qualification.complete ? 'success' : 'warning'}>
-                  {d.qualification.answered}/{d.qualification.total}
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-text-muted">Risco</span>
-                {d.latestRisk ? <RiskBadge level={d.latestRisk.level} compact /> : <Badge>Não avaliado</Badge>}
-              </div>
+              {!pf && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-text-muted">Formulário de qualificação</span>
+                    <Badge tone={d.qualification.complete ? 'success' : 'warning'}>
+                      {d.qualification.answered}/{d.qualification.total}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-text-muted">Risco</span>
+                    {d.latestRisk ? <RiskBadge level={d.latestRisk.level} compact /> : <Badge>Não avaliado</Badge>}
+                  </div>
+                </>
+              )}
               <div className="flex items-center justify-between">
                 <span className="text-text-muted">Ficha preenchida</span>
                 {d.supplierSubmittedAt ? <Badge tone="success">Enviada {formatDate(d.supplierSubmittedAt)}</Badge> : <Badge>Ainda não</Badge>}
@@ -339,7 +355,7 @@ export default function RequestPage() {
           </Card>
 
           <Card>
-            <CardHeader title="Link do fornecedor" />
+            <CardHeader title={pf ? 'Link da pessoa' : 'Link do fornecedor'} />
             <CardBody className="space-y-2 text-sm">
               {d.invite ? (
                 <>
@@ -371,7 +387,7 @@ export default function RequestPage() {
               {d.justification && <p className="rounded-control bg-ink-50 px-3 py-2 text-ink-700">{d.justification}</p>}
               {can(PERMISSIONS.supplierRead) && (
                 <Link to={PATHS.supplier(d.supplier.id)} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
-                  Ficha completa do fornecedor <ExternalLink className="size-3.5" />
+                  {pf ? 'Ficha completa da pessoa' : 'Ficha completa do fornecedor'} <ExternalLink className="size-3.5" />
                 </Link>
               )}
               {d.uauResult && (

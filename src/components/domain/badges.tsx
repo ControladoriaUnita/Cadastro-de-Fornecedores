@@ -3,9 +3,12 @@
  */
 import { AlertTriangle, CheckCircle2, Clock, ShieldAlert, ShieldCheck, ShieldQuestion, XCircle } from 'lucide-react'
 import { EXPIRY_LABELS, REVIEW_LABELS, type ExpiryState, type ReviewStatus } from '@shared/domain/documents'
-import { STATUS_LABELS, type RequestStatus } from '@shared/domain/request/status'
+import type { RequestStatus } from '@shared/domain/request/status'
 import { RISK_LEVEL_LABELS, type RiskLevel } from '@shared/domain/risk'
-import { SUPPLIER_STATUS_LABELS, type SupplierStatus } from '@shared/domain/supplier'
+import type { SupplierStatus } from '@shared/domain/supplier'
+import { statusLabel, supplierStatusLabel } from '@shared/domain/terms'
+import type { Module } from '@shared/domain/modules'
+import { useModule } from '@/app/module'
 import { Badge, type Tone } from '@/components/ui'
 
 export const STATUS_TONES: Record<RequestStatus, Tone> = {
@@ -19,8 +22,10 @@ export const STATUS_TONES: Record<RequestStatus, Tone> = {
   cancelado: 'neutral',
 }
 
-export function RequestStatusBadge({ status }: { status: RequestStatus }) {
-  return <Badge tone={STATUS_TONES[status]}>{STATUS_LABELS[status]}</Badge>
+/** O texto segue o módulo da tela (PF fala de "pessoa", não de "fornecedor"). */
+export function RequestStatusBadge({ status, module }: { status: RequestStatus; module?: Module }) {
+  const current = useModule()
+  return <Badge tone={STATUS_TONES[status]}>{statusLabel(status, module ?? current)}</Badge>
 }
 
 const RISK_TONES: Record<RiskLevel, Tone> = { baixo: 'success', medio: 'warning', alto: 'error', nao_avaliado: 'neutral' }
@@ -37,8 +42,9 @@ export function RiskBadge({ level, compact }: { level: RiskLevel; compact?: bool
 
 const SUPPLIER_TONES: Record<SupplierStatus, Tone> = { em_cadastro: 'info', homologado: 'success', bloqueado: 'error', inativo: 'neutral' }
 
-export function SupplierStatusBadge({ status }: { status: SupplierStatus }) {
-  return <Badge tone={SUPPLIER_TONES[status]}>{SUPPLIER_STATUS_LABELS[status]}</Badge>
+export function SupplierStatusBadge({ status, module }: { status: SupplierStatus; module?: Module }) {
+  const current = useModule()
+  return <Badge tone={SUPPLIER_TONES[status]}>{supplierStatusLabel(status, module ?? current)}</Badge>
 }
 
 const REVIEW_TONES: Record<ReviewStatus, Tone> = { pendente: 'warning', aprovado: 'success', reprovado: 'error' }

@@ -5,8 +5,9 @@ import { Building2, CheckCircle2, Database, Search, Send } from 'lucide-react'
 import type { DocumentLookupDTO, ModelDTO } from '@shared/contracts'
 import { onlyDigits, personKindOf } from '@shared/domain/document-number'
 import { URGENCIES, URGENCY_LABELS, type Urgency } from '@shared/domain/request/status'
+import { MODULE_INFO, type Module } from '@shared/domain/modules'
 import { PERMISSIONS } from '@shared/domain/roles'
-import { PATHS } from '@/app/navigation'
+import { MODULE_PATHS, PATHS } from '@/app/navigation'
 import { CompanyCard } from '@/components/domain/CompanyCard'
 import { WorkSelect } from '@/components/domain/WorkSelect'
 import { SupplierStatusBadge } from '@/components/domain/badges'
@@ -15,8 +16,9 @@ import { Alert, Button, Card, CardBody, CardHeader, Field, Input, Select, Spinne
 import { api, errorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDocument } from '@/utils/format'
+import { terms } from '@shared/domain/terms'
 
-export default function NewRequestPage() {
+export default function NewRequestPage({ module = 'pj' }: { module?: Module }) {
   const { can } = useAuth()
   const navigate = useNavigate()
   const [document, setDocument] = useState('')
@@ -30,16 +32,21 @@ export default function NewRequestPage() {
   const isAnalyst = can(PERMISSIONS.requestAnalyze)
   const [sendInvite, setSendInvite] = useState(isAnalyst)
 
+  const pf = module === 'pf'
+  const t = terms(module)
+  const info = MODULE_INFO[module]
   const digits = onlyDigits(document)
   const kind = personKindOf(digits)
+  // Cada módulo aceita só o seu documento: Fornecedores/PJ = CNPJ, Pessoas Físicas/PF = CPF
+  const wrongKind = !!kind && kind !== info.personKind
   const lookup = useQuery({
     queryKey: ['lookup', digits],
     queryFn: () => api<DocumentLookupDTO>(`/lookup/${digits}`),
-    enabled: !!kind,
+    enabled: !!kind && !wrongKind,
     staleTime: 5 * 60_000,
     retry: false,
   })
-  const models = useQuery({ queryKey: ['models', 'active'], queryFn: () => api<ModelDTO[]>('/models?active=1'), enabled: isAnalyst })
+  const models = useQuery({ queryKey: ['models', 'active', module], queryFn: () => api<ModelDTO[]>(`/models?active=1&module=${module}`), enabled: isAnalyst })
   const options = (models.data ?? []).filter((m) => !kind || m.personKind === 'ambos' || m.personKind === kind)
 
   // Preenche o e-mail com o da Receita, se o usuário ainda não digitou
@@ -52,7 +59,7 @@ export default function NewRequestPage() {
     mutationFn: () =>
       api<{ id: string; number: number }>('/requests', {
         method: 'POST',
-        body: { document: digits, modelId: modelId || null, contactEmail, contactName: contactName || null, workName: workName || null, justification: justification || null, urgency, sendInvite },
+        body: { module, document: digits, modelId: modelId || null, contactEmail, contactName: contactName || null, workName: workName || null, justification: justification || null, urgency, sendInvite },
       }),
     onSuccess: (r) => navigate(PATHS.request(r.id)),
   })
@@ -60,29 +67,43 @@ export default function NewRequestPage() {
   const existingOpen = lookup.data?.existing?.openRequestId
   const invalidDoc = digits.length >= 11 && !kind && (digits.length === 11 || digits.length === 14)
   const willInvite = isAnalyst && sendInvite
-  const canSubmit = !!kind && /\S+@\S+\.\S+/.test(contactEmail) && !existingOpen && (!willInvite || !!modelId)
+  const canSubmit = !!kind && !wrongKind && /\S+@\S+\.\S+/.test(contactEmail) && !existingOpen && (!willInvite || !!modelId)
 
   return (
     <>
       <PageHeader
-        eyebrow="Solicitações"
-        backTo={PATHS.requests}
-        title={isAnalyst ? 'Nova solicitação de cadastro' : 'Pré-cadastro de fornecedor'}
+        eyebrow={pf ? `Solicitações · ${info.label}` : 'Solicitações'}
+        backTo={MODULE_PATHS[module].requests}
+        title={pf ? 'Novo cadastro de pessoa física' : isAnalyst ? 'Nova solicitação de cadastro' : 'Pré-cadastro de fornecedor'}
         description={
-          isAnalyst
-            ? 'Informe o CNPJ ou CPF: consultamos a Receita, o app e o UAU na hora.'
-            : 'Informe o CNPJ ou CPF e o contato do fornecedor. A solicitação vai para Suprimentos, que faz a triagem e envia o formulário ao fornecedor.'
+          pf
+            ? 'Informe o CPF e o e-mail da pessoa: consultamos o app e o UAU na hora. Ela recebe o link para enviar dados e documentos.'
+            : isAnalyst
+              ? 'Informe o CNPJ: consultamos a Receita, o app e o UAU na hora.'
+              : 'Informe o CNPJ e o contato do fornecedor. A solicitação vai para Suprimentos, que faz a triagem e envia o formulário ao fornecedor.'
         }
       />
       <div className="grid gap-6 lg:grid-cols-[1fr_420px]">
         <div className="space-y-6">
           <Card>
-            <CardHeader title="1. Quem é o fornecedor?" />
+            <CardHeader title={pf ? '1. Quem é a pessoa?' : '1. Quem é o fornecedor?'} />
             <CardBody className="space-y-4">
-              <Field label="CNPJ ou CPF" required error={invalidDoc ? 'Número inválido (confira os dígitos).' : null}>
+              <Field
+                label={info.documentLabel}
+                required
+                error={
+                  invalidDoc
+                    ? 'Número inválido (confira os dígitos).'
+                    : wrongKind
+                      ? pf
+                        ? 'Isto é um CNPJ: empresas são cadastradas no módulo Fornecedores/PJ.'
+                        : 'Isto é um CPF: pessoas físicas são cadastradas no módulo Pessoas Físicas/PF.'
+                      : null
+                }
+              >
                 <div className="relative">
                   <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-400" aria-hidden />
-                  <Input value={document} onChange={(e) => setDocument(e.target.value)} placeholder="00.000.000/0000-00" inputMode="numeric" autoFocus className="pl-9 tabular" maxLength={18} />
+                  <Input value={document} onChange={(e) => setDocument(e.target.value)} placeholder={pf ? '000.000.000-00' : '00.000.000/0000-00'} inputMode="numeric" autoFocus className="pl-9 tabular" maxLength={18} />
                 </div>
               </Field>
               {lookup.isFetching && (
@@ -96,7 +117,7 @@ export default function NewRequestPage() {
                   {lookup.data.existing && (
                     <Alert
                       tone={existingOpen ? 'warning' : 'info'}
-                      title={existingOpen ? `Já existe a solicitação nº ${lookup.data.existing.openRequestNumber} em andamento` : 'Fornecedor já cadastrado no app'}
+                      title={existingOpen ? `Já existe a solicitação nº ${lookup.data.existing.openRequestNumber} em andamento` : pf ? 'Pessoa já cadastrada no app' : 'Fornecedor já cadastrado no app'}
                       action={
                         (existingOpen || can(PERMISSIONS.supplierRead)) && (
                           <Link to={existingOpen ? PATHS.request(existingOpen) : PATHS.supplier(lookup.data.existing.id)} className="text-sm font-semibold underline">
@@ -106,7 +127,7 @@ export default function NewRequestPage() {
                       }
                     >
                       <span className="inline-flex items-center gap-2">
-                        {lookup.data.existing.legalName} <SupplierStatusBadge status={lookup.data.existing.status} />
+                        {lookup.data.existing.legalName} <SupplierStatusBadge module={pf ? 'pf' : 'pj'} status={lookup.data.existing.status} />
                       </span>
                       {!existingOpen && <p className="mt-1">Você pode abrir uma nova solicitação para atualizar o cadastro e os documentos.</p>}
                     </Alert>
@@ -152,9 +173,9 @@ export default function NewRequestPage() {
           <CardBody className="space-y-4">
             {isAnalyst && (
               <Field
-                label="Modelo de fornecedor"
+                label={`Modelo de ${t.person}`}
                 required={willInvite}
-                hint={willInvite ? 'Define quais documentos o fornecedor vai enviar.' : 'Pode ficar para a triagem, antes de enviar o formulário.'}
+                hint={willInvite ? `Define quais documentos ${t.thePerson} vai enviar.` : 'Pode ficar para a triagem, antes de enviar o formulário.'}
               >
               <Select value={modelId} onChange={(e) => setModelId(e.target.value)}>
                 <option value="">Escolha…</option>
@@ -179,8 +200,8 @@ export default function NewRequestPage() {
                   ))}
               </ul>
             )}
-            <Field label="E-mail do fornecedor" required hint="Para onde vai o link de cadastro.">
-              <Input type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="contato@empresa.com.br" />
+            <Field label={`E-mail ${t.ofPerson}`} required hint="Para onde vai o link de cadastro.">
+              <Input type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder={pf ? 'nome@email.com' : 'contato@empresa.com.br'} />
             </Field>
             <Field label="Nome do contato">
               <Input value={contactName} onChange={(e) => setContactName(e.target.value)} />
@@ -188,7 +209,7 @@ export default function NewRequestPage() {
             <Field label="Obra">
               <WorkSelect value={workName} onChange={setWorkName} />
             </Field>
-            <Field label="Por que precisamos deste fornecedor?">
+            <Field label={pf ? 'Por que precisamos deste cadastro?' : 'Por que precisamos deste fornecedor?'}>
               <Textarea value={justification} onChange={(e) => setJustification(e.target.value)} rows={3} />
             </Field>
             <Field label="Urgência">
@@ -203,12 +224,12 @@ export default function NewRequestPage() {
             {isAnalyst && (
               <label className="flex items-start gap-2 text-sm text-ink-700">
                 <input type="checkbox" checked={sendInvite} onChange={(e) => setSendInvite(e.target.checked)} className="mt-1 accent-primary" />
-                Já enviar o link de cadastro ao fornecedor
+                Já enviar o link de cadastro {t.toPerson}
               </label>
             )}
             {create.isError && <Alert tone="error">{errorMessage(create.error)}</Alert>}
             <Button variant="primary" className="w-full" disabled={!canSubmit} loading={create.isPending} onClick={() => create.mutate()} icon={willInvite ? <Send className="size-4" /> : <Building2 className="size-4" />}>
-              {willInvite ? 'Abrir e enviar convite' : isAnalyst ? 'Abrir solicitação' : 'Enviar para Suprimentos'}
+              {willInvite ? 'Abrir e enviar convite' : isAnalyst ? 'Abrir solicitação' : pf ? 'Enviar para análise' : 'Enviar para Suprimentos'}
             </Button>
             {kind && <p className="text-center text-xs text-text-muted">{formatDocument(digits)}</p>}
           </CardBody>

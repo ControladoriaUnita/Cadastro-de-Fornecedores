@@ -5,31 +5,44 @@ import { and, eq, isNull, sql } from 'drizzle-orm'
 import type { DashboardDTO, RatedSupplierDTO } from '../../../shared/contracts'
 import { monthKey, supplierScores } from '../../../shared/domain/evaluation'
 import { expiryState } from '../../../shared/domain/documents'
+import { MODULE_INFO, type Module } from '../../../shared/domain/modules'
 import { CLOSED_STATUSES, REQUEST_STATUSES, type RequestStatus } from '../../../shared/domain/request/status'
 import type { RiskLevel } from '../../../shared/domain/risk'
 import { PERMISSIONS } from '../../../shared/domain/roles'
 import { schema } from '../../infrastructure/db/client'
-import { requirePermission } from '../context'
+import { requireModule, requirePermission } from '../context'
 import { notFromDroppedRequest } from '../shared'
 import type { UseCaseDeps } from '../ports'
 
 const { documentTypes, documents, evaluations, requests, suppliers } = schema
 
-export async function getDashboard(deps: UseCaseDeps): Promise<DashboardDTO> {
+export async function getDashboard(deps: UseCaseDeps, module: Module = 'pj'): Promise<DashboardDTO> {
   requirePermission(deps.ctx.actor, PERMISSIONS.supplierRead)
+  requireModule(deps.ctx.actor, module)
+  // Cada módulo vê só os seus cadastros (PJ = CNPJ, PF = CPF)
+  const kind = eq(suppliers.personKind, MODULE_INFO[module].personKind)
   const now = deps.ctx.now()
   const since30 = new Date(now.getTime() - 30 * 86_400_000)
 
   const [sup, reqRows, docRows, evalRows] = await Promise.all([
-    deps.db.select({ id: suppliers.id, status: suppliers.status, risk: suppliers.riskLevel, name: suppliers.legalName, trade: suppliers.tradeName }).from(suppliers),
-    deps.db.select({ status: requests.status, createdAt: requests.createdAt, closedAt: requests.closedAt }).from(requests),
+    deps.db.select({ id: suppliers.id, status: suppliers.status, risk: suppliers.riskLevel, name: suppliers.legalName, trade: suppliers.tradeName }).from(suppliers).where(kind),
+    deps.db
+      .select({ status: requests.status, createdAt: requests.createdAt, closedAt: requests.closedAt })
+      .from(requests)
+      .innerJoin(suppliers, eq(suppliers.id, requests.supplierId))
+      .where(kind),
     deps.db
       .select({ supplierId: documents.supplierId, expiresAt: documents.expiresAt, typeName: documentTypes.name })
       .from(documents)
       .innerJoin(documentTypes, eq(documentTypes.id, documents.documentTypeId))
       .leftJoin(requests, eq(requests.id, documents.requestId))
-      .where(and(isNull(documents.replacedAt), sql`${documents.expiresAt} is not null`, notFromDroppedRequest)),
-    deps.db.select({ supplierId: evaluations.supplierId, average: evaluations.average, createdAt: evaluations.createdAt }).from(evaluations),
+      .innerJoin(suppliers, eq(suppliers.id, documents.supplierId))
+      .where(and(isNull(documents.replacedAt), sql`${documents.expiresAt} is not null`, notFromDroppedRequest, kind)),
+    deps.db
+      .select({ supplierId: evaluations.supplierId, average: evaluations.average, createdAt: evaluations.createdAt })
+      .from(evaluations)
+      .innerJoin(suppliers, eq(suppliers.id, evaluations.supplierId))
+      .where(kind),
   ])
 
   const nameOf = new Map(sup.map((s) => [s.id, s.trade || s.name]))

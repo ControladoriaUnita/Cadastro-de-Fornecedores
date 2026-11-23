@@ -17,6 +17,7 @@ import { schema } from '../../infrastructure/db/client'
 import { codeEmail } from '../../infrastructure/email/templates'
 import { randomCode, safeEqualHex, sha256, signSession } from '../../infrastructure/security'
 import { AppError, notFound } from '../context'
+import { moduleOfKind } from '../../../shared/domain/modules'
 import { notifyPermission, notifyRequester } from '../notifications'
 import type { PortalDeps } from '../ports'
 import { loadDocuments, loadModel, readDocumentFile, recordEvent, saveDocument } from '../shared'
@@ -35,6 +36,9 @@ function maskEmail(email: string) {
   if (!user || !domain) return email
   return `${user.slice(0, 2)}${'•'.repeat(Math.max(1, user.length - 2))}@${domain}`
 }
+
+/** Quem aparece no histórico quando age pelo link (PF: "Pessoa física"). */
+const portalActor = (kind: string) => (kind === 'PF' ? 'Pessoa física' : 'Fornecedor')
 
 async function inviteByToken(deps: PortalDeps, token: string) {
   if (!/^[\w-]{20,100}$/.test(token)) throw invalidLink()
@@ -55,8 +59,8 @@ async function inviteById(deps: PortalDeps, id: string) {
 export async function portalState(deps: PortalDeps, token: string, sessionInviteId: string | null): Promise<PortalStateDTO> {
   const i = await inviteByToken(deps, token)
   const [r] = await deps.db.select({ supplierId: requests.supplierId }).from(requests).where(eq(requests.id, i.requestId))
-  const [s] = await deps.db.select({ name: suppliers.legalName }).from(suppliers).where(eq(suppliers.id, r!.supplierId))
-  return { stage: sessionInviteId === i.id ? 'ready' : 'needs_code', emailHint: maskEmail(i.email), companyName: s?.name ?? '' }
+  const [s] = await deps.db.select({ name: suppliers.legalName, kind: suppliers.personKind }).from(suppliers).where(eq(suppliers.id, r!.supplierId))
+  return { stage: sessionInviteId === i.id ? 'ready' : 'needs_code', emailHint: maskEmail(i.email), companyName: s?.name ?? '', personKind: s?.kind === 'PF' ? 'PF' : 'PJ' }
 }
 
 export async function sendCode(deps: PortalDeps, token: string) {
@@ -70,7 +74,8 @@ export async function sendCode(deps: PortalDeps, token: string) {
     .update(invites)
     .set({ codeHash: sha256(`${i.id}:${code}`), codeExpiresAt: new Date(now.getTime() + CODE_TTL_MS), codeAttempts: 0 })
     .where(eq(invites.id, i.id))
-  await deps.mailer.send({ ...codeEmail({ code }), to: [i.email], requestId: i.requestId })
+  const [k] = await deps.db.select({ kind: suppliers.personKind }).from(requests).innerJoin(suppliers, eq(suppliers.id, requests.supplierId)).where(eq(requests.id, i.requestId))
+  await deps.mailer.send({ ...codeEmail({ code, module: moduleOfKind(k?.kind ?? 'PJ') }), to: [i.email], requestId: i.requestId })
   return { emailHint: maskEmail(i.email) }
 }
 
@@ -187,7 +192,7 @@ export async function portalUpload(deps: PortalDeps, inviteId: string, form: { f
   await recordEvent(deps.db, {
     requestId: r.id,
     actorId: null,
-    actorLabel: 'Fornecedor',
+    actorLabel: portalActor(s.personKind),
     kind: 'document_uploaded',
     payload: { documentId: doc.id, fileName: doc.fileName, type: doc.documentTypeName },
   })
@@ -208,24 +213,26 @@ export async function portalSubmit(deps: PortalDeps, inviteId: string) {
   if (check.rejected.length) throw new AppError('DOCS_REJECTED', `Envie de novo os documentos reprovados: ${names(check.rejected)}.`, 422)
 
   const to = transition(r.status as RequestStatus, 'supplier_submit', 'supplier', { requesterId: r.requesterId })
+  const pf = moduleOfKind(s.personKind) === 'pf'
   const now = deps.now()
   await deps.db
     .update(suppliers)
     .set({ profile: parsed.data as unknown as Record<string, unknown>, email: parsed.data.email, updatedAt: now })
     .where(eq(suppliers.id, s.id))
   await deps.db.update(requests).set({ status: to, supplierSubmittedAt: now, updatedAt: now }).where(eq(requests.id, r.id))
-  await recordEvent(deps.db, { requestId: r.id, actorId: null, actorLabel: 'Fornecedor', kind: 'supplier_submit', fromStatus: r.status as RequestStatus, toStatus: to })
+  await recordEvent(deps.db, { requestId: r.id, actorId: null, actorLabel: portalActor(s.personKind), kind: 'supplier_submit', fromStatus: r.status as RequestStatus, toStatus: to })
   await notifyPermission(deps.db, deps.mailer, PERMISSIONS.requestAnalyze, {
-    title: `Fornecedor enviou o cadastro — nº ${r.number}`,
+    title: `${pf ? 'A pessoa' : 'Fornecedor'} enviou o cadastro — nº ${r.number}`,
     lines: [`${parsed.data.legalName} (${formatDocument(s.document)}) enviou dados e documentos para análise.`],
     path: `/solicitacoes/${r.id}`,
     requestId: r.id,
-  })
+  }, moduleOfKind(s.personKind))
   await notifyRequester(deps.db, deps.mailer, r.requesterId, {
-    title: `Fornecedor respondeu — solicitação nº ${r.number}`,
-    lines: [`${parsed.data.legalName} (${formatDocument(s.document)}) enviou os dados e documentos. Suprimentos vai analisar.`],
+    title: `${pf ? 'A pessoa' : 'Fornecedor'} respondeu — solicitação nº ${r.number}`,
+    lines: [`${parsed.data.legalName} (${formatDocument(s.document)}) enviou os dados e documentos. ${pf ? 'A equipe' : 'Suprimentos'} vai analisar.`],
     path: `/solicitacoes/${r.id}`,
     requestId: r.id,
+    module: moduleOfKind(s.personKind),
   })
   return portalData(deps, inviteId)
 }

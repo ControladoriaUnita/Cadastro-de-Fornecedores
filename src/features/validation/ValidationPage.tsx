@@ -4,7 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, Code2, Database, FileText, ShieldCheck, Undo2 } from 'lucide-react'
 import type { RequestDetailDTO, UauPreviewDTO } from '@shared/contracts'
 import { PERMISSIONS } from '@shared/domain/roles'
-import { PATHS } from '@/app/navigation'
+import { useShowModule } from '@/app/module'
+import { MODULE_PATHS, PATHS } from '@/app/navigation'
 import { ProfileView } from '@/components/domain/ProfileView'
 import { QualificationForm } from '@/components/domain/QualificationForm'
 import { RequestStatusBadge } from '@/components/domain/badges'
@@ -28,6 +29,8 @@ export default function ValidationPage() {
   const [showJson, setShowJson] = useState<number | null>(null)
   const detail = useQuery({ queryKey: ['request', id], queryFn: () => api<RequestDetailDTO>(`/requests/${id}`) })
   const preview = useQuery({ queryKey: ['uau-preview', id], queryFn: () => api<Preview>(`/requests/${id}/uau-preview`) })
+  // Menu e "voltar" seguem o módulo do registro (PJ/PF)
+  useShowModule(detail.data?.module)
   const done = (r: RequestDetailDTO) => {
     qc.setQueryData(['request', id], r)
     void qc.invalidateQueries({ queryKey: ['requests'] })
@@ -51,9 +54,9 @@ export default function ValidationPage() {
     <>
       <PageHeader
         eyebrow="Validação ERP"
-        backTo={PATHS.validation}
+        backTo={MODULE_PATHS[d.module].validation}
         title={d.supplier.legalName}
-        meta={<RequestStatusBadge status={d.status} />}
+        meta={<RequestStatusBadge status={d.status} module={d.module} />}
         description={`nº ${d.number} · ${formatDocument(d.supplier.document)} · ${d.model?.name ?? '—'}`}
         actions={
           <>
@@ -80,7 +83,7 @@ export default function ValidationPage() {
           <Alert tone={p.writeEnabled ? 'warning' : 'info'} title={p.writeEnabled ? 'Gravação real ligada' : 'Modo simulação'}>
             {p.writeEnabled
               ? 'Ao aprovar, a pessoa, o telefone, a conta e os anexos serão gravados no UAU de produção.'
-              : 'Ao aprovar, o fluxo é concluído e o fornecedor fica homologado no app, mas nada é gravado no UAU (UAU_GRAVACAO=simulacao).'}
+              : d.module === 'pf' ? 'Ao aprovar, o fluxo é concluído e a pessoa fica cadastrada no app, mas nada é gravado no UAU (UAU_GRAVACAO=simulacao).' : 'Ao aprovar, o fluxo é concluído e o fornecedor fica homologado no app, mas nada é gravado no UAU (UAU_GRAVACAO=simulacao).'}
           </Alert>
           {d.status === 'gravado_uau' && (
             <Alert tone="success" title="Concluído">
@@ -148,12 +151,15 @@ export default function ValidationPage() {
             </Card>
           </div>
 
-          <Card>
-            <CardHeader title="Formulário de qualificação" description="Respondido por Suprimentos; vai ao UAU em PDF, junto com os documentos." />
-            <CardBody>
-              <QualificationForm requestId={d.id} qualification={d.qualification} editable={false} />
-            </CardBody>
-          </Card>
+          {/* Pessoas Físicas/PF: sem formulário de qualificação e sem risco */}
+          {d.module === 'pj' && (
+            <Card>
+              <CardHeader title="Formulário de qualificação" description="Respondido por Suprimentos; vai ao UAU em PDF, junto com os documentos." />
+              <CardBody>
+                <QualificationForm requestId={d.id} qualification={d.qualification} editable={false} />
+              </CardBody>
+            </Card>
+          )}
 
           <Card>
             <CardHeader title="Ficha cadastral" />
@@ -162,12 +168,14 @@ export default function ValidationPage() {
             </CardBody>
           </Card>
 
-          <Card>
-            <CardHeader title="Análise de risco" />
-            <CardBody>
-              <RiskPanel check={d.latestRisk} />
-            </CardBody>
-          </Card>
+          {d.module === 'pj' && (
+            <Card>
+              <CardHeader title="Análise de risco" />
+              <CardBody>
+                <RiskPanel check={d.latestRisk} />
+              </CardBody>
+            </Card>
+          )}
 
           <Card>
             <CardHeader title="Chamadas ao UAU" description="Exatamente o que será enviado (o conteúdo dos arquivos aparece resumido)." />

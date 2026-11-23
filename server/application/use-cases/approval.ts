@@ -13,6 +13,7 @@ import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
 import type { RequestDetailDTO, UauPreviewDTO } from '../../../shared/contracts'
 import { formatDocument } from '../../../shared/domain/document-number'
 import { PERMISSIONS } from '../../../shared/domain/roles'
+import { terms } from '../../../shared/domain/terms'
 import { supplierProfileSchema, type SupplierProfile } from '../../../shared/domain/supplier'
 import {
   buildAttachBody,
@@ -130,7 +131,7 @@ export async function approveRequest(deps: UseCaseDeps, requestId: string) {
   const dup = detail.supplier.uauCodPes
     ? { found: true, codPes: detail.supplier.uauCodPes, name: null, error: null }
     : await checkUauPerson(deps.uau, detail.supplier.document)
-  if (dup.error) throw new AppError('UAU_CHECK_FAILED', `Não foi possível confirmar se o fornecedor já existe no UAU: ${dup.error}`, 502)
+  if (dup.error) throw new AppError('UAU_CHECK_FAILED', `Não foi possível confirmar se ${terms(deps.ctx.module).thePerson} já existe no UAU: ${dup.error}`, 502)
   let codPes: number | null = dup.codPes
 
   // 2) pessoa, telefone e conta
@@ -206,10 +207,15 @@ export async function approveRequest(deps: UseCaseDeps, requestId: string) {
 
   const [requester] = await deps.db.select({ email: users.email }).from(users).where(eq(users.id, detail.requester.id))
   await notifyAddresses(deps.mailer, [requester?.email ?? ''], {
-    title: `Fornecedor homologado — solicitação nº ${detail.number}`,
-    lines: [`${detail.supplier.legalName} (${formatDocument(detail.supplier.document)}) foi homologado${simulated ? ' (simulação)' : ` e cadastrado no UAU com o código ${codPes}`}.`],
+    title: detail.module === 'pf' ? `Pessoa cadastrada — solicitação nº ${detail.number}` : `Fornecedor homologado — solicitação nº ${detail.number}`,
+    lines: [
+      detail.module === 'pf'
+        ? `${detail.supplier.legalName} (${formatDocument(detail.supplier.document)}) foi aprovada${simulated ? ' (simulação)' : ` e cadastrada no UAU com o código ${codPes}`}.`
+        : `${detail.supplier.legalName} (${formatDocument(detail.supplier.document)}) foi homologado${simulated ? ' (simulação)' : ` e cadastrado no UAU com o código ${codPes}`}.`,
+    ],
     path: `/solicitacoes/${requestId}`,
     requestId,
+    module: detail.module,
   })
   return getRequest(deps, requestId)
 }
@@ -286,7 +292,7 @@ export async function resendAttachments(deps: UseCaseDeps, requestId: string) {
   const detail = await getRequest(deps, requestId)
   if (detail.status !== 'gravado_uau' || detail.uauSimulated) throw new AppError('NOT_IN_UAU', 'Só dá para reenviar anexos de solicitação já gravada no UAU.', 409)
   const codPes = detail.supplier.uauCodPes
-  if (!codPes) throw new AppError('NO_UAU_CODE', 'O fornecedor está sem o código da pessoa no UAU.', 409)
+  if (!codPes) throw new AppError('NO_UAU_CODE', `${terms(detail.module).ThePerson} está sem o código da pessoa no UAU.`, 409)
   if (!deps.uau.writeEnabled) throw new AppError('UAU_SIMULATION', 'A gravação no UAU está em simulação (UAU_GRAVACAO=simulacao).', 409)
 
   const res = await attachPendingDocuments(deps, detail, codPes, uauUser(), deps.ctx.now())
@@ -309,15 +315,16 @@ export async function resendAttachments(deps: UseCaseDeps, requestId: string) {
 export async function resendSupplierAttachments(deps: UseCaseDeps, supplierId: string) {
   requirePermission(deps.ctx.actor, PERMISSIONS.requestApprove)
   const [s] = await deps.db.select({ uauCodPes: suppliers.uauCodPes }).from(suppliers).where(eq(suppliers.id, supplierId))
-  if (!s) throw new AppError('NOT_FOUND', 'Fornecedor não encontrado.', 404)
-  if (!s.uauCodPes) throw new AppError('NO_UAU_CODE', 'O fornecedor está sem o código da pessoa no UAU.', 409)
+  const t = terms(deps.ctx.module)
+  if (!s) throw new AppError('NOT_FOUND', 'Cadastro não encontrado.', 404)
+  if (!s.uauCodPes) throw new AppError('NO_UAU_CODE', `${t.ThePerson} está sem o código da pessoa no UAU.`, 409)
   if (!deps.uau.writeEnabled) throw new AppError('UAU_SIMULATION', 'A gravação no UAU está em simulação (UAU_GRAVACAO=simulacao).', 409)
   const inUau = await deps.db
     .select({ id: requests.id })
     .from(requests)
     .where(and(eq(requests.supplierId, supplierId), eq(requests.status, 'gravado_uau'), eq(requests.uauSimulated, false)))
     .orderBy(desc(requests.closedAt))
-  if (!inUau.length) throw new AppError('NOT_IN_UAU', 'Este fornecedor não tem solicitação gravada no UAU pelo app.', 409)
+  if (!inUau.length) throw new AppError('NOT_IN_UAU', `${deps.ctx.module === 'pf' ? 'Esta pessoa' : 'Este fornecedor'} não tem solicitação gravada no UAU pelo app.`, 409)
 
   let total = 0
   for (const { id } of inUau) {
@@ -330,7 +337,7 @@ export async function resendSupplierAttachments(deps: UseCaseDeps, supplierId: s
       actorId: deps.ctx.actor.id,
       actorLabel: deps.ctx.actor.fullName,
       kind: res.ok ? 'uau_attach' : 'uau_error',
-      comment: res.ok ? `${res.count} anexo(s) enviados ao UAU pela ficha do fornecedor (pessoa ${s.uauCodPes}).` : res.warning,
+      comment: res.ok ? `${res.count} anexo(s) enviados ao UAU pela ficha ${t.ofPerson} (pessoa ${s.uauCodPes}).` : res.warning,
     })
     if (!res.ok) throw new AppError('UAU_ATTACH_FAILED', `O UAU recusou os anexos. ${res.warning ?? ''}`.trim(), 502)
   }
