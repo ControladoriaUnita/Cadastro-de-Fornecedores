@@ -1,11 +1,11 @@
 /**
- * Avaliação de fornecedor: notas de 1 a 5 por critério, média ponderada pelos pesos.
+ * Avaliação de fornecedor: notas de 1 a 10 por critério, média ponderada pelos pesos.
  */
 
 export const SCORE_MIN = 1
-export const SCORE_MAX = 5
+export const SCORE_MAX = 10
 
-export const SCORE_LABELS: Record<number, string> = { 1: 'Péssimo', 2: 'Ruim', 3: 'Regular', 4: 'Bom', 5: 'Ótimo' }
+export const SCORE_LABELS: Record<number, string> = { 1: 'Péssimo', 2: 'Péssimo', 3: 'Ruim', 4: 'Ruim', 5: 'Regular', 6: 'Regular', 7: 'Bom', 8: 'Bom', 9: 'Ótimo', 10: 'Ótimo' }
 
 export interface CriterionLike {
   id: string
@@ -29,9 +29,9 @@ export type ScoreBand = 'otimo' | 'bom' | 'atencao' | 'critico'
 
 export function scoreBand(avg: number | null): ScoreBand | null {
   if (avg === null) return null
-  if (avg >= 4.5) return 'otimo'
-  if (avg >= 3.5) return 'bom'
-  if (avg >= 2.5) return 'atencao'
+  if (avg >= 9) return 'otimo'
+  if (avg >= 7) return 'bom'
+  if (avg >= 5) return 'atencao'
   return 'critico'
 }
 

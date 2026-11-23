@@ -2,17 +2,17 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Star } from 'lucide-react'
 import type { CriterionDTO, EvaluationDTO } from '@shared/contracts'
-import { SCORE_LABELS, weightedAverage } from '@shared/domain/evaluation'
+import { SCORE_LABELS, SCORE_MAX, weightedAverage } from '@shared/domain/evaluation'
 import { Alert, Button, Dialog, Field, Input, Skeleton, Textarea } from '@/components/ui'
 import { api, errorMessage } from '@/lib/api'
 import { cn } from '@/utils/cn'
 import { formatScore } from '@/utils/format'
 
-/** Formulário de avaliação (notas de 1 a 5 por critério), usado na ficha e na tela "Avaliar". */
+/** Formulário de avaliação (notas de 1 a 10 por critério), usado na ficha e na tela "Avaliar". */
 function Stars({ value, onChange, label }: { value: number; onChange: (v: number) => void; label: string }) {
   return (
     <div className="flex items-center gap-1" role="radiogroup" aria-label={label}>
-      {[1, 2, 3, 4, 5].map((n) => (
+      {Array.from({ length: SCORE_MAX }, (_, i) => i + 1).map((n) => (
         <button key={n} type="button" role="radio" aria-checked={value === n} aria-label={`${n} — ${SCORE_LABELS[n]}`} onClick={() => onChange(n)} className="rounded p-0.5">
           <Star className={cn('size-6 transition', n <= value ? 'fill-primary text-primary' : 'text-ink-300 hover:text-primary')} />
         </button>
@@ -49,7 +49,7 @@ export function EvaluationDialog({ supplierId, supplierName, onClose, onSaved }:
       onClose={onClose}
       width="min(92vw, 36rem)"
       title={supplierName ? `Avaliar ${supplierName}` : 'Avaliar fornecimento'}
-      description="Notas de 1 a 5 por critério; a média considera o peso de cada um."
+      description="Notas de 1 a 10 por critério; a média considera o peso de cada um."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} className="mr-auto">

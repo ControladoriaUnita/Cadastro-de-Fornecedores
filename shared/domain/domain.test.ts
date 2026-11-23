@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { evaluationSchema } from '../contracts'
 import { formatDocument, isValidCnpj, isValidCpf, personKindOf } from './document-number'
 import { documentChecklist, expiryState } from './documents'
-import { monthKey, monthLabel, supplierScores, weightedAverage } from './evaluation'
+import { monthKey, monthLabel, SCORE_LABELS, SCORE_MAX, scoreBand, supplierScores, weightedAverage } from './evaluation'
 import { availableActions, transition, WorkflowError } from './request/workflow'
 import { defaultRuleConfigs, evaluateRisk, type RiskFacts } from './risk'
 import { DEFAULT_ROLES, permissionsFor, PERMISSIONS, roleKeyFromName } from './roles'
@@ -250,5 +251,18 @@ describe('Médias de avaliação', () => {
   it('formata o mês', () => {
     expect(monthKey('2026-01-01T02:00:00Z')).toBe('2025-12')
     expect(monthLabel('2026-11')).toBe('nov/2026')
+  })
+})
+
+describe('Escala de notas 1 a 10', () => {
+  it('vai até 10, com rótulo para cada nota e faixas de cor proporcionais', () => {
+    expect(SCORE_MAX).toBe(10)
+    expect(Object.keys(SCORE_LABELS)).toHaveLength(10)
+    expect([9.2, 7, 5.5, 4.9, null].map(scoreBand)).toEqual(['otimo', 'bom', 'atencao', 'critico', null])
+    const base = { supplierId: '00000000-0000-4000-8000-000000000000', workName: 'Obra', comment: null }
+    const c = '00000000-0000-4000-8000-000000000001'
+    expect(evaluationSchema.safeParse({ ...base, scores: { [c]: 10 } }).success).toBe(true)
+    expect(evaluationSchema.safeParse({ ...base, scores: { [c]: 11 } }).success).toBe(false)
+    expect(evaluationSchema.safeParse({ ...base, scores: { [c]: 0 } }).success).toBe(false)
   })
 })

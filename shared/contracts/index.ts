@@ -7,7 +7,7 @@ import { onlyDigits, personKindOf } from '../domain/document-number'
 import type { ExpiryState, ReviewStatus } from '../domain/documents'
 import type { RequestAction } from '../domain/request/workflow'
 import { URGENCIES, type RequestStatus, type Urgency } from '../domain/request/status'
-import type { SupplierScores } from '../domain/evaluation'
+import { SCORE_MAX, SCORE_MIN, type SupplierScores } from '../domain/evaluation'
 import { QUALIFICATION_ANSWERS, type QualificationItem } from '../domain/qualification'
 import { RISK_RULE_KEYS, RISK_SEVERITIES, type RiskFinding, type RiskLevel, type RiskRuleDefinition, type RiskSeverity } from '../domain/risk'
 import { ALL_PERMISSIONS, type Permission, type RoleKey } from '../domain/roles'
@@ -513,7 +513,7 @@ export const evaluationSchema = z.object({
   supplierId: z.string().uuid(),
   workName: z.string().trim().min(2, 'Informe a obra').max(120),
   reference: z.string().trim().max(80).nullable().optional(),
-  scores: z.record(z.string().uuid(), z.number().int().min(1).max(5)),
+  scores: z.record(z.string().uuid(), z.number().int().min(SCORE_MIN).max(SCORE_MAX)),
   comment: z.string().trim().max(1000).nullable().optional(),
 })
 

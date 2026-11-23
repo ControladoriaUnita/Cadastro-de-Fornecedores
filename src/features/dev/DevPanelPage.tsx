@@ -231,7 +231,7 @@ function Criteria() {
   })
   return (
     <Card>
-      <CardHeader title="Critérios de avaliação" description="Notas de 1 a 5; a média é ponderada pelo peso." actions={<Button size="sm" variant="primary" icon={<Plus className="size-4" />} onClick={() => open('new')}>Novo critério</Button>} />
+      <CardHeader title="Critérios de avaliação" description="Notas de 1 a 10; a média é ponderada pelo peso." actions={<Button size="sm" variant="primary" icon={<Plus className="size-4" />} onClick={() => open('new')}>Novo critério</Button>} />
       <ul className="divide-y divide-border-soft">
         {q.data?.map((c) => (
           <li key={c.id} className="flex items-center gap-3 px-5 py-3">
