@@ -18,6 +18,7 @@ import * as portal from './application/use-cases/portal'
 import * as qualificationUC from './application/use-cases/qualification'
 import * as requests from './application/use-cases/requests'
 import * as suppliersUC from './application/use-cases/suppliers'
+import * as worksUC from './application/use-cases/works'
 import { loadActor } from './infrastructure/auth'
 import * as schema from './infrastructure/db/schema'
 
@@ -394,7 +395,7 @@ describe('fluxo de cadastro (banco em memória)', () => {
     const homologated = byName[0]!
     const criteria = (await db.select().from(schema.evaluationCriteria)) as { id: string }[]
     const scores = Object.fromEntries(criteria.map((c) => [c.id, 2]))
-    const e = await suppliersUC.createEvaluation(asObra, { supplierId: homologated.id, workName: 'Obra Teste', reference: 'PC-1', scores, comment: null })
+    const e = await suppliersUC.createEvaluation(asObra, { supplierId: homologated.id, workName: 'ipanema 212', reference: 'PC-1', scores, comment: null })
     expect(e.average).toBe(2)
 
     const [notHomologated] = await db.select().from(schema.suppliers).where(eq(schema.suppliers.document, CNPJ2))
@@ -402,9 +403,32 @@ describe('fluxo de cadastro (banco em memória)', () => {
 
     const mine = await suppliersUC.myEvaluations(asObra)
     expect(mine).toHaveLength(1)
-    expect(mine[0]).toMatchObject({ supplierId: homologated.id, workName: 'Obra Teste', reference: 'PC-1', average: 2 })
+    expect(mine[0]).toMatchObject({ supplierId: homologated.id, workName: 'Ipanema 212', reference: 'PC-1', average: 2 })
     // a Obra continua sem ver a base nem o Painel
     await expect(suppliersUC.listSuppliers(asObra)).rejects.toMatchObject({ status: 403 })
     await expect(suppliersUC.getSupplier(asObra, homologated.id)).rejects.toMatchObject({ status: 403 })
+  })
+
+  it('obras: lista da migração, cadastro no Painel dev e só obra ativa nos campos', async () => {
+    const asObra = await staff(users.obra)
+    const asAnalyst = await staff(users.analista)
+    const asDev = { ...asAnalyst, ctx: { ...asAnalyst.ctx, actor: { ...asAnalyst.ctx.actor, permissions: [...asAnalyst.ctx.actor.permissions, 'settings.manage'] } } }
+    const list = await worksUC.listWorks(asObra)
+    expect(list).toHaveLength(34)
+    expect(list.find((w) => w.name === 'MetroCasa Vista Cupecê')).toMatchObject({ uauCode: '55', client: 'Metrocasa', active: true })
+
+    // só quem edita configurações cadastra; nome repetido (sem diferenciar maiúsculas) é recusado
+    await expect(worksUC.saveWork(asObra, null, { name: 'Obra Nova', active: true })).rejects.toMatchObject({ status: 403 })
+    await expect(worksUC.saveWork(asDev, null, { name: 'ipanema 212', active: true })).rejects.toMatchObject({ code: 'WORK_EXISTS' })
+    const nova = await worksUC.saveWork(asDev, null, { name: 'Obra Nova Teste', uauCode: '99', client: 'Unità', city: 'Goiânia/GO', active: true })
+
+    // solicitação e avaliação só aceitam obra cadastrada e ativa; o nome é gravado como no cadastro
+    await expect(requests.createRequest(asObra, { document: '45723174000110', modelId: null, contactEmail: 'w@t.com', workName: 'Obra Inventada', urgency: 'normal', sendInvite: false } as any)).rejects.toMatchObject({ code: 'WORK_NOT_FOUND' })
+    const r = await requests.createRequest(asObra, { document: '45723174000110', modelId: null, contactEmail: 'w@t.com', workName: 'obra nova teste', urgency: 'normal', sendInvite: false } as any)
+    expect((await requests.getRequest(asObra, r.id)).workName).toBe('Obra Nova Teste')
+    await worksUC.saveWork(asDev, nova.id, { name: 'Obra Nova Teste', active: false })
+    await expect(requests.createRequest(asObra, { document: '07526557000100', modelId: null, contactEmail: 'w2@t.com', workName: 'Obra Nova Teste', urgency: 'normal', sendInvite: false } as any)).rejects.toMatchObject({ code: 'WORK_NOT_FOUND' })
+    // a solicitação antiga continua com o nome da obra desativada
+    expect((await requests.getRequest(asObra, r.id)).workName).toBe('Obra Nova Teste')
   })
 })

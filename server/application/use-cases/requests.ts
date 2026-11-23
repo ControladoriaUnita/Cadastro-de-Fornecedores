@@ -26,6 +26,7 @@ import { AppError, can, notFound, requirePermission } from '../context'
 import { toEvent, toSupplierDetail } from '../mappers'
 import { appUrl, notifyAddresses, notifyPermission, notifyRequester } from '../notifications'
 import { loadQualification } from './qualification'
+import { resolveWorkName } from './works'
 import type { UseCaseDeps } from '../ports'
 import { loadDocuments, loadModel, recordEvent, saveDocument } from '../shared'
 import { loadRiskChecks } from './suppliers'
@@ -221,7 +222,7 @@ export async function createRequest(deps: UseCaseDeps, input: CreateRequestInput
       modelId: model?.id ?? null,
       requesterId: deps.ctx.actor.id,
       urgency: input.urgency,
-      workName: input.workName ?? null,
+      workName: input.workName ? await resolveWorkName(deps.db, input.workName) : null,
       justification: input.justification ?? null,
       contactEmail: input.contactEmail,
       contactName: input.contactName ?? null,

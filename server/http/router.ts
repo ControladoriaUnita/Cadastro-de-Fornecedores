@@ -18,6 +18,7 @@ import {
   importFromUauSchema,
   qualificationAnswersSchema,
   qualificationQuestionSchema,
+  workSchema,
   uauSyncSchema,
   inviteSchema,
   modelSchema,
@@ -45,6 +46,7 @@ import * as qualification from '../application/use-cases/qualification'
 import * as requests from '../application/use-cases/requests'
 import * as settings from '../application/use-cases/settings'
 import * as suppliersUC from '../application/use-cases/suppliers'
+import * as works from '../application/use-cases/works'
 import { authMode, devLoginAllowed, entraAuthorizeUrl, entraCallback, entraConfigured, issueStaffSession, loadActor, loadRoleCatalog } from '../infrastructure/auth'
 import { getDb, schema } from '../infrastructure/db/client'
 import { createMailer } from '../infrastructure/email'
@@ -246,6 +248,9 @@ staff('PUT', '/requests/:id/qualification', async (deps, c) => {
   await qualification.saveQualification(deps, id(c), parse(qualificationAnswersSchema, await c.json()))
   return requests.getRequest(deps, id(c))
 })
+staff('GET', '/works', (deps) => works.listWorks(deps))
+staff('POST', '/works', async (deps, c) => works.saveWork(deps, null, parse(workSchema, await c.json())), 201)
+staff('PUT', '/works/:id', async (deps, c) => works.saveWork(deps, id(c), parse(workSchema, await c.json())))
 staff('GET', '/qualification-questions', (deps) => qualification.listQualificationQuestions(deps))
 staff('POST', '/qualification-questions', async (deps, c) => qualification.saveQualificationQuestion(deps, null, parse(qualificationQuestionSchema, await c.json())), 201)
 staff('PUT', '/qualification-questions/:id', async (deps, c) => qualification.saveQualificationQuestion(deps, id(c), parse(qualificationQuestionSchema, await c.json())))

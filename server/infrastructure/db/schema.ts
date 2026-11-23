@@ -97,6 +97,18 @@ export const evaluationCriteria = pgTable('evaluation_criteria', {
   createdAt: createdAt(),
 })
 
+/** Obras da Unità (lista suspensa nos campos "Obra"); cadastro inicial veio da ferramenta de Planejamento. */
+export const works = pgTable('works', {
+  id: id(),
+  name: text('name').notNull().unique(),
+  /** Código da obra no UAU */
+  uauCode: text('uau_code'),
+  client: text('client'),
+  city: text('city'),
+  active: boolean('active').notNull().default(true),
+  createdAt: createdAt(),
+})
+
 /** Perguntas do formulário de qualificação (editáveis no Painel dev; respondidas por Suprimentos). */
 export const qualificationQuestions = pgTable('qualification_questions', {
   id: id(),

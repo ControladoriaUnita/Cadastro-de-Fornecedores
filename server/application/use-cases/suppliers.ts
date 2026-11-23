@@ -35,6 +35,7 @@ import { toRiskCheck, toSupplierDetail } from '../mappers'
 import type { UseCaseDeps } from '../ports'
 import { loadDocuments, loadModel, notFromDroppedRequest, userNames } from '../shared'
 import { loadQualification } from './qualification'
+import { resolveWorkName } from './works'
 import { listCriteria, loadRiskConfigs } from './settings'
 import { checkUauPerson, findUauPerson } from './uau-people'
 
@@ -491,7 +492,7 @@ export async function createEvaluation(deps: UseCaseDeps, input: z.infer<typeof 
     .values({
       supplierId: input.supplierId,
       evaluatorId: deps.ctx.actor.id,
-      workName: input.workName,
+      workName: await resolveWorkName(deps.db, input.workName),
       reference: input.reference ?? null,
       scores,
       average,

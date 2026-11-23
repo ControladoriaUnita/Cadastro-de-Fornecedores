@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, CheckCircle2, Pencil, Plus, XCircle } from 'lucide-react'
-import type { CriterionDTO, DiagnosticsDTO, DocumentTypeDTO, OutboxItemDTO, QualificationQuestionDTO, RiskRuleDTO } from '@shared/contracts'
+import type { CriterionDTO, DiagnosticsDTO, DocumentTypeDTO, OutboxItemDTO, QualificationQuestionDTO, RiskRuleDTO, WorkDTO } from '@shared/contracts'
 import { RISK_SEVERITIES, SEVERITY_LABELS, type RiskSeverity } from '@shared/domain/risk'
 import { PERMISSIONS, type Permission } from '@shared/domain/roles'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -11,7 +11,7 @@ import { useAuth } from '@/lib/auth'
 import { formatDateTime } from '@/utils/format'
 import { RolesManager, UsersManager } from './AccessManagement'
 
-type Tab = 'diag' | 'users' | 'roles' | 'types' | 'qualification' | 'criteria' | 'risk' | 'outbox'
+type Tab = 'diag' | 'users' | 'roles' | 'works' | 'types' | 'qualification' | 'criteria' | 'risk' | 'outbox'
 
 const Ok = ({ ok, children }: { ok: boolean; children: React.ReactNode }) => (
   <span className="inline-flex items-center gap-1.5 text-sm">
@@ -126,6 +126,84 @@ function DocumentTypes() {
             )}
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" className="accent-primary" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} /> Ativo
+            </label>
+            {save.isError && <Alert tone="error">{errorMessage(save.error)}</Alert>}
+          </div>
+        </Dialog>
+      )}
+    </Card>
+  )
+}
+
+function Works() {
+  const qc = useQueryClient()
+  const q = useQuery({ queryKey: ['works'], queryFn: () => api<WorkDTO[]>('/works') })
+  const [edit, setEdit] = useState<WorkDTO | 'new' | null>(null)
+  const [search, setSearch] = useState('')
+  const [form, setForm] = useState({ name: '', uauCode: '', client: '', city: '', active: true })
+  const open = (w: WorkDTO | 'new') => {
+    setEdit(w)
+    setForm(w === 'new' ? { name: '', uauCode: '', client: '', city: '', active: true } : { name: w.name, uauCode: w.uauCode ?? '', client: w.client ?? '', city: w.city ?? '', active: w.active })
+  }
+  const save = useMutation({
+    mutationFn: () =>
+      api(edit === 'new' ? '/works' : `/works/${(edit as WorkDTO).id}`, {
+        method: edit === 'new' ? 'POST' : 'PUT',
+        body: { name: form.name, uauCode: form.uauCode || null, client: form.client || null, city: form.city || null, active: form.active },
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['works'] })
+      setEdit(null)
+    },
+  })
+  const term = search.trim().toLowerCase()
+  const list = (q.data ?? []).filter((w) => !term || `${w.name} ${w.uauCode ?? ''} ${w.client ?? ''} ${w.city ?? ''}`.toLowerCase().includes(term))
+  return (
+    <Card>
+      <CardHeader
+        title="Obras"
+        description="Aparecem na lista dos campos “Obra” (pré-cadastro e avaliação). Obra inativa sai da lista, mas o histórico continua com o nome."
+        actions={<Button size="sm" variant="primary" icon={<Plus className="size-4" />} onClick={() => open('new')}>Nova obra</Button>}
+      />
+      <div className="px-5 pt-4">
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filtrar por nome, código UAU, cliente ou cidade" aria-label="Filtrar obras" />
+      </div>
+      {q.isError && <Alert tone="error" className="m-4">{errorMessage(q.error)}</Alert>}
+      <ul className="mt-2 divide-y divide-border-soft">
+        {list.map((w) => (
+          <li key={w.id} className="flex items-center gap-3 px-5 py-3">
+            <div className="min-w-0 flex-1">
+              <p className="font-medium">
+                {w.name} {!w.active && <Badge tone="warning">Inativa</Badge>}
+              </p>
+              <p className="text-xs text-text-muted">{[w.uauCode && `UAU ${w.uauCode}`, w.client, w.city].filter(Boolean).join(' · ') || '—'}</p>
+            </div>
+            <Button size="sm" variant="ghost" aria-label={`Editar ${w.name}`} onClick={() => open(w)}>
+              <Pencil className="size-4" />
+            </Button>
+          </li>
+        ))}
+      </ul>
+      <p className="px-5 py-3 text-xs text-text-muted">{list.length} de {q.data?.length ?? 0} obra(s)</p>
+      {edit && (
+        <Dialog open onClose={() => setEdit(null)} title={edit === 'new' ? 'Nova obra' : 'Editar obra'} footer={<Button variant="primary" loading={save.isPending} disabled={form.name.trim().length < 2} onClick={() => save.mutate()}>Salvar</Button>}>
+          <div className="space-y-3">
+            <Field label="Nome da obra" required hint="Como aparece na lista. Renomear não altera solicitações e avaliações já feitas.">
+              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Código no UAU">
+                <Input value={form.uauCode} onChange={(e) => setForm({ ...form, uauCode: e.target.value })} />
+              </Field>
+              <Field label="Cliente">
+                <Input value={form.client} onChange={(e) => setForm({ ...form, client: e.target.value })} />
+              </Field>
+            </div>
+            <Field label="Cidade">
+              <Input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="São Paulo/SP" />
+            </Field>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" className="accent-primary" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} /> Ativa (aparece na lista)
             </label>
             {save.isError && <Alert tone="error">{errorMessage(save.error)}</Alert>}
           </div>
@@ -367,6 +445,7 @@ function Outbox() {
 const TABS: { key: Tab; label: string; permission: Permission }[] = [
   { key: 'users', label: 'Usuários', permission: PERMISSIONS.usersManage },
   { key: 'roles', label: 'Cargos e permissões', permission: PERMISSIONS.usersManage },
+  { key: 'works', label: 'Obras', permission: PERMISSIONS.settingsManage },
   { key: 'types', label: 'Tipos de documento', permission: PERMISSIONS.settingsManage },
   { key: 'qualification', label: 'Formulário de qualificação', permission: PERMISSIONS.settingsManage },
   { key: 'criteria', label: 'Critérios de avaliação', permission: PERMISSIONS.settingsManage },
@@ -386,6 +465,7 @@ export default function DevPanelPage() {
       <div className="mt-6">
         {tab === 'users' && <UsersManager />}
         {tab === 'roles' && <RolesManager />}
+        {tab === 'works' && <Works />}
         {tab === 'types' && <DocumentTypes />}
         {tab === 'qualification' && <QualificationQuestions />}
         {tab === 'criteria' && <Criteria />}

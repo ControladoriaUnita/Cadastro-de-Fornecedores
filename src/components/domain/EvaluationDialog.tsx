@@ -5,6 +5,7 @@ import type { CriterionDTO, EvaluationDTO } from '@shared/contracts'
 import { SCORE_LABELS, SCORE_MAX, weightedAverage } from '@shared/domain/evaluation'
 import { Alert, Button, Dialog, Field, Input, Skeleton, Textarea } from '@/components/ui'
 import { api, errorMessage } from '@/lib/api'
+import { WorkSelect } from '@/components/domain/WorkSelect'
 import { cn } from '@/utils/cn'
 import { formatScore } from '@/utils/format'
 
@@ -64,7 +65,7 @@ export function EvaluationDialog({ supplierId, supplierName, onClose, onSaved }:
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Obra" required>
-            <Input value={workName} onChange={(e) => setWorkName(e.target.value)} />
+            <WorkSelect value={workName} onChange={setWorkName} />
           </Field>
           <Field label="Pedido / contrato">
             <Input value={reference} onChange={(e) => setReference(e.target.value)} />

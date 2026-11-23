@@ -8,6 +8,7 @@ import { URGENCIES, URGENCY_LABELS, type Urgency } from '@shared/domain/request/
 import { PERMISSIONS } from '@shared/domain/roles'
 import { PATHS } from '@/app/navigation'
 import { CompanyCard } from '@/components/domain/CompanyCard'
+import { WorkSelect } from '@/components/domain/WorkSelect'
 import { SupplierStatusBadge } from '@/components/domain/badges'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Alert, Button, Card, CardBody, CardHeader, Field, Input, Select, Spinner, Textarea } from '@/components/ui'
@@ -184,8 +185,8 @@ export default function NewRequestPage() {
             <Field label="Nome do contato">
               <Input value={contactName} onChange={(e) => setContactName(e.target.value)} />
             </Field>
-            <Field label="Obra / centro de custo">
-              <Input value={workName} onChange={(e) => setWorkName(e.target.value)} />
+            <Field label="Obra">
+              <WorkSelect value={workName} onChange={setWorkName} />
             </Field>
             <Field label="Por que precisamos deste fornecedor?">
               <Textarea value={justification} onChange={(e) => setJustification(e.target.value)} rows={3} />

@@ -129,6 +129,25 @@ export const criterionSchema = z.object({
   sort: z.number().int().default(0),
 })
 
+// ----------------------------------------------------------------------------- obras
+
+export interface WorkDTO {
+  id: string
+  name: string
+  uauCode: string | null
+  client: string | null
+  city: string | null
+  active: boolean
+}
+
+export const workSchema = z.object({
+  name: z.string().trim().min(2, 'Informe o nome da obra').max(120),
+  uauCode: z.string().trim().max(20).nullable().optional(),
+  client: z.string().trim().max(80).nullable().optional(),
+  city: z.string().trim().max(80).nullable().optional(),
+  active: z.boolean().default(true),
+})
+
 // ----------------------------------------------------------------------------- formulário de qualificação
 
 export interface QualificationQuestionDTO {
