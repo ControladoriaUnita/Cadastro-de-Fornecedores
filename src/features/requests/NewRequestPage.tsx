@@ -25,7 +25,9 @@ export default function NewRequestPage() {
   const [workName, setWorkName] = useState('')
   const [justification, setJustification] = useState('')
   const [urgency, setUrgency] = useState<Urgency>('normal')
-  const [sendInvite, setSendInvite] = useState(can(PERMISSIONS.requestAnalyze))
+  // Obra faz só o pré-cadastro; quem analisa (Suprimentos) pode já escolher o modelo e enviar o formulário
+  const isAnalyst = can(PERMISSIONS.requestAnalyze)
+  const [sendInvite, setSendInvite] = useState(isAnalyst)
 
   const digits = onlyDigits(document)
   const kind = personKindOf(digits)
@@ -36,7 +38,7 @@ export default function NewRequestPage() {
     staleTime: 5 * 60_000,
     retry: false,
   })
-  const models = useQuery({ queryKey: ['models', 'active'], queryFn: () => api<ModelDTO[]>('/models?active=1') })
+  const models = useQuery({ queryKey: ['models', 'active'], queryFn: () => api<ModelDTO[]>('/models?active=1'), enabled: isAnalyst })
   const options = (models.data ?? []).filter((m) => !kind || m.personKind === 'ambos' || m.personKind === kind)
 
   // Preenche o e-mail com o da Receita, se o usuário ainda não digitou
@@ -49,18 +51,28 @@ export default function NewRequestPage() {
     mutationFn: () =>
       api<{ id: string; number: number }>('/requests', {
         method: 'POST',
-        body: { document: digits, modelId, contactEmail, contactName: contactName || null, workName: workName || null, justification: justification || null, urgency, sendInvite },
+        body: { document: digits, modelId: modelId || null, contactEmail, contactName: contactName || null, workName: workName || null, justification: justification || null, urgency, sendInvite },
       }),
     onSuccess: (r) => navigate(PATHS.request(r.id)),
   })
 
   const existingOpen = lookup.data?.existing?.openRequestId
   const invalidDoc = digits.length >= 11 && !kind && (digits.length === 11 || digits.length === 14)
-  const canSubmit = !!kind && !!modelId && /\S+@\S+\.\S+/.test(contactEmail) && !existingOpen
+  const willInvite = isAnalyst && sendInvite
+  const canSubmit = !!kind && /\S+@\S+\.\S+/.test(contactEmail) && !existingOpen && (!willInvite || !!modelId)
 
   return (
     <>
-      <PageHeader eyebrow="Solicitações" backTo={PATHS.requests} title="Nova solicitação de cadastro" description="Informe o CNPJ ou CPF: consultamos a Receita, o app e o UAU na hora." />
+      <PageHeader
+        eyebrow="Solicitações"
+        backTo={PATHS.requests}
+        title={isAnalyst ? 'Nova solicitação de cadastro' : 'Pré-cadastro de fornecedor'}
+        description={
+          isAnalyst
+            ? 'Informe o CNPJ ou CPF: consultamos a Receita, o app e o UAU na hora.'
+            : 'Informe o CNPJ ou CPF e o contato do fornecedor. A solicitação vai para Suprimentos, que faz a triagem e envia o formulário ao fornecedor.'
+        }
+      />
       <div className="grid gap-6 lg:grid-cols-[1fr_420px]">
         <div className="space-y-6">
           <Card>
@@ -85,9 +97,11 @@ export default function NewRequestPage() {
                       tone={existingOpen ? 'warning' : 'info'}
                       title={existingOpen ? `Já existe a solicitação nº ${lookup.data.existing.openRequestNumber} em andamento` : 'Fornecedor já cadastrado no app'}
                       action={
-                        <Link to={existingOpen ? PATHS.request(existingOpen) : PATHS.supplier(lookup.data.existing.id)} className="text-sm font-semibold underline">
-                          Abrir
-                        </Link>
+                        (existingOpen || can(PERMISSIONS.supplierRead)) && (
+                          <Link to={existingOpen ? PATHS.request(existingOpen) : PATHS.supplier(lookup.data.existing.id)} className="text-sm font-semibold underline">
+                            Abrir
+                          </Link>
+                        )
                       }
                     >
                       <span className="inline-flex items-center gap-2">
@@ -135,7 +149,12 @@ export default function NewRequestPage() {
         <Card className="h-fit lg:sticky lg:top-24">
           <CardHeader title="2. Dados da solicitação" />
           <CardBody className="space-y-4">
-            <Field label="Modelo de fornecedor" required hint="Define quais documentos o fornecedor vai enviar.">
+            {isAnalyst && (
+              <Field
+                label="Modelo de fornecedor"
+                required={willInvite}
+                hint={willInvite ? 'Define quais documentos o fornecedor vai enviar.' : 'Pode ficar para a triagem, antes de enviar o formulário.'}
+              >
               <Select value={modelId} onChange={(e) => setModelId(e.target.value)}>
                 <option value="">Escolha…</option>
                 {options.map((m) => (
@@ -145,7 +164,8 @@ export default function NewRequestPage() {
                 ))}
               </Select>
             </Field>
-            {modelId && (
+            )}
+            {isAnalyst && modelId && (
               <ul className="space-y-1 rounded-control bg-ink-50 px-3 py-2 text-xs text-ink-700">
                 {options
                   .find((m) => m.id === modelId)
@@ -179,15 +199,15 @@ export default function NewRequestPage() {
                 ))}
               </Select>
             </Field>
-            {can(PERMISSIONS.requestAnalyze) && (
+            {isAnalyst && (
               <label className="flex items-start gap-2 text-sm text-ink-700">
                 <input type="checkbox" checked={sendInvite} onChange={(e) => setSendInvite(e.target.checked)} className="mt-1 accent-primary" />
                 Já enviar o link de cadastro ao fornecedor
               </label>
             )}
             {create.isError && <Alert tone="error">{errorMessage(create.error)}</Alert>}
-            <Button variant="primary" className="w-full" disabled={!canSubmit} loading={create.isPending} onClick={() => create.mutate()} icon={sendInvite ? <Send className="size-4" /> : <Building2 className="size-4" />}>
-              {sendInvite ? 'Abrir e enviar convite' : 'Abrir solicitação'}
+            <Button variant="primary" className="w-full" disabled={!canSubmit} loading={create.isPending} onClick={() => create.mutate()} icon={willInvite ? <Send className="size-4" /> : <Building2 className="size-4" />}>
+              {willInvite ? 'Abrir e enviar convite' : isAnalyst ? 'Abrir solicitação' : 'Enviar para Suprimentos'}
             </Button>
             {kind && <p className="text-center text-xs text-text-muted">{formatDocument(digits)}</p>}
           </CardBody>

@@ -30,7 +30,7 @@ function RequestCard({ r }: { r: RequestCardDTO }) {
       </div>
       <p className="mt-1 line-clamp-2 text-sm font-semibold text-text">{r.supplierName}</p>
       <p className="tabular text-xs text-text-muted">{formatDocument(r.document)}</p>
-      <p className="mt-2 truncate text-xs text-ink-600">{r.modelName}</p>
+      <p className="mt-2 truncate text-xs text-ink-600">{r.modelName ?? 'Modelo a definir'}</p>
       {r.workName && <p className="truncate text-xs text-ink-600">Obra: {r.workName}</p>}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {r.riskLevel !== 'nao_avaliado' && <RiskBadge level={r.riskLevel} compact />}
@@ -75,7 +75,7 @@ export default function KanbanPage() {
       <PageHeader
         eyebrow="Solicitações"
         title="Kanban de cadastros"
-        description="Cada cartão é uma solicitação. Clique para abrir, conferir e mover de etapa."
+        description={can(PERMISSIONS.requestAnalyze) ? 'Cada cartão é uma solicitação. Clique para abrir, conferir e mover de etapa.' : 'Acompanhe as solicitações que você abriu. Suprimentos faz a triagem e envia o formulário ao fornecedor.'}
         actions={
           can(PERMISSIONS.requestCreate) && (
             <Link to={PATHS.newRequest}>

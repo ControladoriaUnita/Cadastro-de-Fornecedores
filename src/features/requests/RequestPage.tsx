@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, CircleAlert, ExternalLink, Mail, ShieldCheck, X } from 'lucide-react'
-import type { DocumentDTO, RequestDetailDTO } from '@shared/contracts'
+import type { DocumentDTO, ModelDTO, RequestDetailDTO } from '@shared/contracts'
+import { personKindOf } from '@shared/domain/document-number'
 import { STATUS_DESCRIPTIONS } from '@shared/domain/request/status'
 import { ACTIONS, type RequestAction } from '@shared/domain/request/workflow'
 import { PERMISSIONS } from '@shared/domain/roles'
@@ -14,7 +15,7 @@ import { RequestStatusBadge, RiskBadge } from '@/components/domain/badges'
 import { RiskPanel } from '@/components/domain/RiskPanel'
 import { Timeline } from '@/components/domain/Timeline'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { Alert, Badge, Button, Card, CardBody, CardHeader, Dialog, Field, Input, Skeleton, Tabs, Textarea } from '@/components/ui'
+import { Alert, Badge, Button, Card, CardBody, CardHeader, Dialog, Field, Input, Select, Skeleton, Tabs, Textarea } from '@/components/ui'
 import { api, errorBlockers, errorMessage, upload } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDate, formatDateTime, formatDocument } from '@/utils/format'
@@ -34,11 +35,16 @@ function ActionDialog({ action, detail, onClose, onDone }: { action: RequestActi
   const rule = ACTIONS[action]
   const [comment, setComment] = useState('')
   const [email, setEmail] = useState(detail.contactEmail)
+  // Triagem: Suprimentos escolhe o modelo (documentos exigidos) ao enviar o formulário
+  const [modelId, setModelId] = useState(detail.model?.id ?? '')
+  const kind = personKindOf(detail.supplier.document)
+  const models = useQuery({ queryKey: ['models', 'active'], queryFn: () => api<ModelDTO[]>('/models?active=1'), enabled: action === 'invite' })
+  const modelOptions = (models.data ?? []).filter((m) => m.personKind === 'ambos' || m.personKind === kind)
   const m = useMutation({
     mutationFn: () =>
       api<RequestDetailDTO>(`/requests/${detail.id}/${ACTION_ENDPOINT[action]}`, {
         method: 'POST',
-        body: action === 'invite' ? { email, message: comment || null } : { comment: comment || undefined },
+        body: action === 'invite' ? { email, message: comment || null, modelId: modelId || undefined } : { comment: comment || undefined },
       }),
     onSuccess: onDone,
   })
@@ -54,7 +60,12 @@ function ActionDialog({ action, detail, onClose, onDone }: { action: RequestActi
           <Button variant="ghost" onClick={onClose} className="mr-auto">
             Voltar
           </Button>
-          <Button variant={danger ? 'danger' : 'primary'} loading={m.isPending} disabled={!!rule.commentRequired && !comment.trim()} onClick={() => m.mutate()}>
+          <Button
+            variant={danger ? 'danger' : 'primary'}
+            loading={m.isPending}
+            disabled={(!!rule.commentRequired && !comment.trim()) || (action === 'invite' && !modelId)}
+            onClick={() => m.mutate()}
+          >
             {rule.label}
           </Button>
         </>
@@ -64,6 +75,16 @@ function ActionDialog({ action, detail, onClose, onDone }: { action: RequestActi
         {action === 'invite' && (
           <>
             <p>O fornecedor recebe um link pessoal (válido por 15 dias) para preencher os dados e enviar os documentos. Um link anterior deixa de valer.</p>
+            <Field label="Modelo de fornecedor" required hint="Define quais documentos o fornecedor vai enviar.">
+              <Select value={modelId} onChange={(e) => setModelId(e.target.value)}>
+                <option value="">Escolha…</option>
+                {modelOptions.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
             <Field label="E-mail do fornecedor" required>
               <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             </Field>
@@ -163,7 +184,8 @@ export default function RequestPage() {
   const analyze = can(PERMISSIONS.requestAnalyze)
   const canReview = analyze && ['em_analise', 'pendencias', 'aguardando_fornecedor'].includes(d.status)
   const c = d.checklist
-  const requiredCount = d.model.requirements.filter((r) => r.required).length
+  const requirements = d.model?.requirements ?? []
+  const requiredCount = requirements.filter((r) => r.required).length
   const okCount = requiredCount - c.missing.length - c.pendingReview.length - c.rejected.length - c.expired.length
 
   const buttons = d.actions.filter((a) => a !== 'supplier_submit' && a !== 'approve')
@@ -180,7 +202,7 @@ export default function RequestPage() {
             {d.uauSimulated && <Badge tone="warning">Gravação simulada</Badge>}
           </>
         }
-        description={`${formatDocument(d.supplier.document)} · ${d.model.name} · ${STATUS_DESCRIPTIONS[d.status]}`}
+        description={`${formatDocument(d.supplier.document)} · ${d.model?.name ?? 'Modelo a definir na triagem'} · ${STATUS_DESCRIPTIONS[d.status]}`}
         actions={
           <>
             {buttons.map((a) => (
@@ -222,7 +244,7 @@ export default function RequestPage() {
           <CardBody className="py-5">
             {tab === 'docs' && (
               <DocumentList
-                requirements={d.model.requirements}
+                requirements={requirements}
                 documents={d.documents}
                 fileUrl={(doc) => `/api/documents/${doc.id}/file`}
                 onUpload={
@@ -326,9 +348,11 @@ export default function RequestPage() {
                 </p>
               )}
               {d.justification && <p className="rounded-control bg-ink-50 px-3 py-2 text-ink-700">{d.justification}</p>}
-              <Link to={PATHS.supplier(d.supplier.id)} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
-                Ficha completa do fornecedor <ExternalLink className="size-3.5" />
-              </Link>
+              {can(PERMISSIONS.supplierRead) && (
+                <Link to={PATHS.supplier(d.supplier.id)} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
+                  Ficha completa do fornecedor <ExternalLink className="size-3.5" />
+                </Link>
+              )}
               {d.uauResult && (
                 <div className="mt-2 rounded-control border border-border-soft p-3">
                   <p className="flex items-center gap-1 font-medium">

@@ -142,7 +142,8 @@ export const requests = pgTable(
     id: id(),
     number: serial('number').notNull().unique(),
     supplierId: uuid('supplier_id').notNull().references(() => suppliers.id),
-    modelId: uuid('model_id').notNull().references(() => supplierModels.id),
+    /** null = pré-cadastro sem modelo; Suprimentos define ao enviar o formulário */
+    modelId: uuid('model_id').references(() => supplierModels.id),
     requesterId: uuid('requester_id').notNull().references(() => users.id),
     analystId: uuid('analyst_id').references(() => users.id),
     status: text('status').notNull().default('solicitado'),

@@ -211,7 +211,8 @@ export interface DocumentLookupDTO {
 
 export const createRequestSchema = z.object({
   document: documentNumberSchema,
-  modelId: z.string().uuid('Escolha o modelo de fornecedor'),
+  /** Opcional: no pré-cadastro da Obra, Suprimentos escolhe na triagem */
+  modelId: z.string().uuid('Escolha o modelo de fornecedor').nullable().optional(),
   contactEmail: z.string().trim().toLowerCase().email('E-mail do fornecedor inválido').max(120),
   contactName: z.string().trim().max(80).nullable().optional(),
   workName: z.string().trim().max(120).nullable().optional(),
@@ -224,6 +225,8 @@ export type CreateRequestInput = z.infer<typeof createRequestSchema>
 
 export const inviteSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(120).optional(),
+  /** Modelo escolhido na triagem (obrigatório se a solicitação ainda não tem) */
+  modelId: z.string().uuid().optional(),
   message: z.string().trim().max(1000).nullable().optional(),
 })
 
@@ -235,7 +238,7 @@ export interface RequestCardDTO {
   supplierId: string
   supplierName: string
   document: string
-  modelName: string
+  modelName: string | null
   requesterName: string
   workName: string | null
   riskLevel: RiskLevel
@@ -325,7 +328,8 @@ export interface RequestDetailDTO {
   uauSimulated: boolean | null
   uauResult: Record<string, unknown> | null
   supplier: SupplierDetailDTO
-  model: ModelDTO
+  /** null = pré-cadastro ainda sem modelo (Suprimentos define na triagem) */
+  model: ModelDTO | null
   documents: DocumentDTO[]
   checklist: ChecklistDTO
   latestRisk: RiskCheckDTO | null

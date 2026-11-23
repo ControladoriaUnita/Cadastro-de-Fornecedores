@@ -37,3 +37,16 @@ export async function notifyAddresses(mailer: Mailer, to: string[], msg: { title
     console.warn('[aviso] falhou', err)
   }
 }
+
+/** Avisa quem abriu a solicitação (Obra), a não ser que tenha sido ele mesmo a agir. */
+export async function notifyRequester(
+  db: Db,
+  mailer: Mailer,
+  requesterId: string,
+  msg: { title: string; lines: string[]; path: string | null; requestId: string | null },
+  actorId: string | null = null,
+) {
+  if (actorId && actorId === requesterId) return
+  const [u] = await db.select({ email: schema.users.email, active: schema.users.active }).from(schema.users).where(eq(schema.users.id, requesterId))
+  if (u?.active) await notifyAddresses(mailer, [u.email], msg)
+}

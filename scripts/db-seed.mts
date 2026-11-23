@@ -18,8 +18,8 @@ const db = drizzle(neon(process.env.DATABASE_URL!), { schema: s })
 const devEmail = (process.env.DEV_EMAIL ?? 'dev@unitaengenharia.com.br').toLowerCase()
 
 const USERS = [
-  { email: devEmail, fullName: 'Administrador Dev', roles: ['dev', 'aprovador', 'analista', 'solicitante'] },
-  { email: 'solicitante.teste@unitaengenharia.com.br', fullName: 'Solicitante (teste)', roles: ['solicitante'] },
+  { email: devEmail, fullName: 'Administrador Dev', roles: ['dev', 'aprovador', 'analista', 'obra'] },
+  { email: 'obra.teste@unitaengenharia.com.br', fullName: 'Obra (teste)', roles: ['obra'] },
   { email: 'analista.teste@unitaengenharia.com.br', fullName: 'Analista (teste)', roles: ['analista'] },
   { email: 'aprovador.teste@unitaengenharia.com.br', fullName: 'Aprovador (teste)', roles: ['aprovador'] },
 ]

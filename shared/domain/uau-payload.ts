@@ -50,19 +50,31 @@ export const UAU_PHONE_JSON_HEADER = JSON.stringify([
   },
 ])
 
-export function buildSavePersonBody(p: SupplierProfile, opts: { user: string; now: Date }) {
+/** "S/N", "SN", "sem número"… → vazio (o UAU fica com o número em branco). */
+export function addressNumber(n: string | null | undefined): string {
+  const v = (n ?? '').trim()
+  return !v || /^(s\.?\s*\/?\s*n\.?|sem\s*n(u|ú)mero|0+)$/i.test(v) ? '' : v.slice(0, 10)
+}
+
+/** Data de abertura da Receita ("2010-05-03") → data aceita pelo UAU no campo Fundação. */
+function foundationDate(v: string | null | undefined): string | undefined {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v ?? '')
+  return m ? `${m[1]}-${m[2]}-${m[3]}T00:00:00` : undefined
+}
+
+export function buildSavePersonBody(p: SupplierProfile, opts: { user: string; now: Date; foundedAt?: string | null }) {
   const pj = p.document.length === 14
-  const address = {
+  const address = (tipo: 0 | 1) => ({
     CodPes_pend: 0,
-    Tipo_pend: 0, // endereço principal
+    Tipo_pend: tipo, // 0 = principal, 1 = cobrança (mesmo endereço informado pelo fornecedor)
     Endereco_pend: cut(p.address.street, 120),
-    NumEnd_pend: cut(p.address.number, 10),
+    NumEnd_pend: addressNumber(p.address.number),
     ComplEndereco_pend: cut(p.address.complement, 60),
     Bairro_pend: cut(p.address.district, 60),
     Cidade_pend: cut(p.address.city, 60),
     UF_pend: p.address.uf,
     CEP_pend: p.address.cep,
-  }
+  })
   return {
     nao_validar_campos_obrigatorios: false,
     // Objetos, não listas (Swagger GravarPessoaRequest): lista chega vazia e o UAU responde "info_pes é obrigatório"
@@ -72,6 +84,8 @@ export function buildSavePersonBody(p: SupplierProfile, opts: { user: string; no
       tipo_pes: pj ? 1 : 0,
       cpf_pes: onlyDigits(p.document),
       dtcad_pes: opts.now.toISOString(),
+      // Campo "Fundação" da tela do UAU (para PJ): data de abertura do CNPJ na Receita
+      dtnasc_pes: pj ? foundationDate(opts.foundedAt) : undefined,
       intext_pes: UAU_EXTERNO,
       usrcad_pes: opts.user,
       status_pes: UAU_STATUS_CONFIRMADO,
@@ -88,7 +102,9 @@ export function buildSavePersonBody(p: SupplierProfile, opts: { user: string; no
     // O exemplo oficial (Postman da Globaltec) manda SEMPRE os dois blocos; sem um deles o UAU devolve HTTP 500.
     // O controller lê alguns números com .Value: vazios dão "O objeto nulo deve ter um valor" (HTTP 500).
     info_pesfis: { cod_pf: 0, sexo_pf: 0, indicativofiscal_pf: 0 },
-    infopes_jur: { cod_pj: 0, natureza_pj: 0, contato_pj: pj ? (p.contactName ?? undefined) : undefined, optantesimples_pj: pj ? (p.simplesNacional ?? undefined) : undefined },    info_pesendereco_principal: address,
+    infopes_jur: { cod_pj: 0, natureza_pj: 0, contato_pj: pj ? (p.contactName ?? undefined) : undefined, optantesimples_pj: pj ? (p.simplesNacional ?? undefined) : undefined },
+    info_pesendereco_principal: address(0),
+    infopesendereco_cobranca: address(1),
     dspes_tel_json: UAU_PHONE_JSON_HEADER,
   }
 }

@@ -17,7 +17,7 @@ import { schema } from '../../infrastructure/db/client'
 import { codeEmail } from '../../infrastructure/email/templates'
 import { randomCode, safeEqualHex, sha256, signSession } from '../../infrastructure/security'
 import { AppError, notFound } from '../context'
-import { notifyPermission } from '../notifications'
+import { notifyPermission, notifyRequester } from '../notifications'
 import type { PortalDeps } from '../ports'
 import { loadDocuments, loadModel, readDocumentFile, recordEvent, saveDocument } from '../shared'
 
@@ -117,7 +117,7 @@ function prefillFromCompany(c: CompanyDTO | null, email: string | null): Record<
 export async function portalData(deps: PortalDeps, inviteId: string): Promise<PortalDataDTO> {
   const { invite, request: r, supplier: s } = await inviteById(deps, inviteId)
   await deps.db.update(invites).set({ lastAccessAt: deps.now() }).where(eq(invites.id, invite.id))
-  const model = await loadModel(deps.db, r.modelId)
+  const model = await loadModel(deps.db, r.modelId!) // convite só sai com modelo definido
   const docs = await loadDocuments(deps.db, s.id)
   let pendingNote: string | null = null
   if (r.status === 'pendencias') {
@@ -167,7 +167,7 @@ export async function saveProfile(deps: PortalDeps, inviteId: string, profile: R
 
 export async function portalUpload(deps: PortalDeps, inviteId: string, form: { file: File; documentTypeId: string; issuedAt: string | null; expiresAt: string | null }) {
   const { request: r, supplier: s } = await editable(deps, inviteId)
-  const model = await loadModel(deps.db, r.modelId)
+  const model = await loadModel(deps.db, r.modelId!) // convite só sai com modelo definido
   const doc = await saveDocument(
     deps.db,
     deps.storage,
@@ -200,7 +200,7 @@ export async function portalSubmit(deps: PortalDeps, inviteId: string) {
   if (!parsed.success) {
     throw new AppError('PROFILE_INVALID', 'Confira os dados cadastrais: há campos obrigatórios em branco ou inválidos.', 422, parsed.error.flatten())
   }
-  const model = await loadModel(deps.db, r.modelId)
+  const model = await loadModel(deps.db, r.modelId!) // convite só sai com modelo definido
   const docs = await loadDocuments(deps.db, s.id)
   const check = documentChecklist(model.requirements, docs, deps.now())
   const names = (ids: string[]) => ids.map((id) => model.requirements.find((q) => q.documentTypeId === id)?.name ?? id).join(', ')
@@ -218,6 +218,12 @@ export async function portalSubmit(deps: PortalDeps, inviteId: string) {
   await notifyPermission(deps.db, deps.mailer, PERMISSIONS.requestAnalyze, {
     title: `Fornecedor enviou o cadastro — nº ${r.number}`,
     lines: [`${parsed.data.legalName} (${formatDocument(s.document)}) enviou dados e documentos para análise.`],
+    path: `/solicitacoes/${r.id}`,
+    requestId: r.id,
+  })
+  await notifyRequester(deps.db, deps.mailer, r.requesterId, {
+    title: `Fornecedor respondeu — solicitação nº ${r.number}`,
+    lines: [`${parsed.data.legalName} (${formatDocument(s.document)}) enviou os dados e documentos. Suprimentos vai analisar.`],
     path: `/solicitacoes/${r.id}`,
     requestId: r.id,
   })

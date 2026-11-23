@@ -29,7 +29,7 @@ export default function ValidationQueuePage() {
                       nº {r.number} · {r.supplierName}
                     </p>
                     <p className="text-sm text-text-muted">
-                      {formatDocument(r.document)} · {r.modelName} · pedido por {r.requesterName} · {formatRelative(r.updatedAt)}
+                      {formatDocument(r.document)} · {r.modelName ?? '—'} · pedido por {r.requesterName} · {formatRelative(r.updatedAt)}
                     </p>
                   </div>
                   <RiskBadge level={r.riskLevel} compact />

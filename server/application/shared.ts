@@ -1,7 +1,7 @@
 /**
  * Consultas e operações reaproveitadas por vários casos de uso.
  */
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { DocumentDTO, ModelDTO } from '../../shared/contracts'
 import { ACCEPTED_MIME, MAX_FILE_BYTES } from '../../shared/domain/documents'
 import type { RequestStatus } from '../../shared/domain/request/status'
@@ -12,7 +12,13 @@ import { AppError, notFound } from './context'
 import { toDocument, toModel } from './mappers'
 import type { FileStorage } from './ports'
 
-const { documents, documentTypes, modelRequirements, requestEvents, supplierModels, users } = schema
+const { documents, documentTypes, modelRequirements, requestEvents, requests, supplierModels, users } = schema
+
+/**
+ * Vencimentos: documento de solicitação cancelada ou recusada não precisa de renovação.
+ * Usar com LEFT JOIN em requests por documents.request_id (documento sem solicitação continua valendo).
+ */
+export const notFromDroppedRequest = sql`(${requests.status} is null or ${requests.status} not in ('cancelado', 'recusado'))`
 
 export async function loadModel(db: Db, modelId: string): Promise<ModelDTO> {
   const [m] = await db.select().from(supplierModels).where(eq(supplierModels.id, modelId))

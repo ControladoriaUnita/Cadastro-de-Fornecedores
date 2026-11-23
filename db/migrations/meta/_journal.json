@@ -15,6 +15,13 @@
       "when": 1795007689040,
       "tag": "0001_cargos",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795441907049,
+      "tag": "0002_modelo_opcional",
+      "breakpoints": true
     }
   ]
 }

@@ -6,7 +6,7 @@ import { availableActions, transition, WorkflowError } from './request/workflow'
 import { defaultRuleConfigs, evaluateRisk, type RiskFacts } from './risk'
 import { DEFAULT_ROLES, permissionsFor, PERMISSIONS, roleKeyFromName } from './roles'
 import { supplierProfileSchema } from './supplier'
-import { buildAttachBody, buildBankBody, buildSavePersonBody, extractPersonCode, findSupplierFolder, joinFolder, supplierFolderName } from './uau-payload'
+import { addressNumber, buildAttachBody, buildBankBody, buildSavePersonBody, extractPersonCode, findSupplierFolder, joinFolder, supplierFolderName } from './uau-payload'
 import { firstValidEmail, mapUauPerson, selectUauSuppliers } from './uau-suppliers'
 
 describe('CNPJ/CPF', () => {
@@ -27,10 +27,10 @@ describe('CNPJ/CPF', () => {
 
 describe('workflow da solicitação', () => {
   const analyst = { id: 'a', permissions: permissionsFor(['analista'], DEFAULT_ROLES) }
-  const requester = { id: 'r', permissions: permissionsFor(['solicitante'], DEFAULT_ROLES) }
+  const requester = { id: 'r', permissions: permissionsFor(['obra'], DEFAULT_ROLES) }
   const approver = { id: 'p', permissions: permissionsFor(['aprovador'], DEFAULT_ROLES) }
 
-  it('solicitante só cancela o próprio pedido', () => {
+  it('obra só cancela o próprio pedido', () => {
     expect(availableActions('solicitado', requester, 'r')).toEqual(['cancel'])
     expect(availableActions('solicitado', requester, 'outro')).toEqual([])
   })
@@ -49,13 +49,16 @@ describe('workflow da solicitação', () => {
     expect(() => transition('em_analise', 'request_changes', analyst, { requesterId: 'r' })).toThrow(/motivo/)
     expect(() => transition('em_analise', 'supplier_submit', 'supplier', { requesterId: 'r' })).toThrow(WorkflowError)
   })
+  it('obra só abre e acompanha as próprias solicitações', () => {
+    expect(permissionsFor(['obra'], DEFAULT_ROLES)).toEqual(['request.create', 'request.read.own'])
+  })
   it('dev tem todas as permissões, mesmo sem estar no catálogo', () => {
     expect(permissionsFor(['dev'], [])).toEqual(expect.arrayContaining(Object.values(PERMISSIONS)))
   })
   it('cargo novo soma permissões e ignora permissões desconhecidas', () => {
-    const catalog = [{ key: 'obra', permissions: ['request.create', 'x.inexistente'] as never[] }, ...DEFAULT_ROLES]
-    expect(permissionsFor(['obra', 'solicitante'], catalog)).toEqual(expect.arrayContaining(['request.create', 'supplier.read']))
-    expect(permissionsFor(['obra'], catalog)).toEqual(['request.create'])
+    const catalog = [{ key: 'compras', permissions: ['request.create', 'x.inexistente'] as never[] }, ...DEFAULT_ROLES]
+    expect(permissionsFor(['compras', 'analista'], catalog)).toEqual(expect.arrayContaining(['request.create', 'supplier.read']))
+    expect(permissionsFor(['compras'], catalog)).toEqual(['request.create'])
     expect(permissionsFor(['cargo-apagado'], catalog)).toEqual([])
   })
   it('gera a chave do cargo a partir do nome', () => {
@@ -158,6 +161,14 @@ describe('payload do UAU', () => {
     expect(body.info_pes).toMatchObject({ cod_pes: 0, tipo_pes: 1, cpf_pes: '11222333000181', status_pes: 2, atinat_pes: 0, nome_pes: 'CONSTRUTORA EXEMPLO LTDA', email_pes: 'contato@exemplo.com.br' })
     expect('infopes_jur' in body).toBe(true)
     expect(body.info_pesendereco_principal).toMatchObject({ Tipo_pend: 0, CEP_pend: '01310100', UF_pend: 'SP' })
+  })
+  it('manda fundação, endereço de cobrança e número vazio quando não houver', () => {
+    const body = buildSavePersonBody({ ...profile, address: { ...profile.address, number: 'S/N' } }, { user: 'API', now: new Date('2026-01-01T00:00:00Z'), foundedAt: '2010-05-03' })
+    expect(body.info_pes).toMatchObject({ dtnasc_pes: '2010-05-03T00:00:00' })
+    expect(body.info_pesendereco_principal).toMatchObject({ Tipo_pend: 0, NumEnd_pend: '' })
+    expect(body.infopesendereco_cobranca).toMatchObject({ Tipo_pend: 1, NumEnd_pend: '', CEP_pend: '01310100', Endereco_pend: 'Av. Paulista' })
+    expect(buildSavePersonBody(profile, { user: 'API', now: new Date() }).info_pes.dtnasc_pes).toBeUndefined()
+    expect(['s/n', 'SN', 'S/N.', 'sem número', '0', '', '1000'].map(addressNumber)).toEqual(['', '', '', '', '', '', '1000'])
   })
   it('monta conta bancária e anexos', () => {
     expect(buildBankBody(profile, 123)).toMatchObject({ codigoPessoa: 123, banco: 341, padrao: true, tipo: 0 })

@@ -9,6 +9,7 @@ import type { RiskLevel } from '../../../shared/domain/risk'
 import { PERMISSIONS } from '../../../shared/domain/roles'
 import { schema } from '../../infrastructure/db/client'
 import { requirePermission } from '../context'
+import { notFromDroppedRequest } from '../shared'
 import type { UseCaseDeps } from '../ports'
 
 const { documentTypes, documents, evaluations, requestEvents, requests, suppliers } = schema
@@ -25,7 +26,8 @@ export async function getDashboard(deps: UseCaseDeps): Promise<DashboardDTO> {
       .select({ supplierId: documents.supplierId, expiresAt: documents.expiresAt, typeName: documentTypes.name })
       .from(documents)
       .innerJoin(documentTypes, eq(documentTypes.id, documents.documentTypeId))
-      .where(and(isNull(documents.replacedAt), sql`${documents.expiresAt} is not null`)),
+      .leftJoin(requests, eq(requests.id, documents.requestId))
+      .where(and(isNull(documents.replacedAt), sql`${documents.expiresAt} is not null`, notFromDroppedRequest)),
     deps.db
       .select({ supplierId: evaluations.supplierId, avg: sql<string>`avg(${evaluations.average})`, n: sql<number>`count(*)::int` })
       .from(evaluations)

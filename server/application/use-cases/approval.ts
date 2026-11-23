@@ -79,7 +79,7 @@ export async function uauPreview(deps: UseCaseDeps, requestId: string): Promise<
   if (parsed.success) {
     const p = parsed.data
     if (!duplicate.found) {
-      steps.push({ route: UAU_ROUTES.savePerson, description: 'Cria a pessoa (confirmada e ativa)', body: buildSavePersonBody(p, { user: uauUser(), now: deps.ctx.now() }) })
+      steps.push({ route: UAU_ROUTES.savePerson, description: 'Cria a pessoa (confirmada e ativa)', body: buildSavePersonBody(p, { user: uauUser(), now: deps.ctx.now(), foundedAt: await foundedAt(deps, detail.supplier) }) })
       steps.push({ route: UAU_ROUTES.savePhone, description: 'Telefone principal', body: buildPhoneBody(p, codPlaceholder) })
       const bank = buildBankBody(p, codPlaceholder)
       if (bank) steps.push({ route: UAU_ROUTES.saveBank, description: 'Conta bancária padrão', body: bank })
@@ -129,7 +129,7 @@ export async function approveRequest(deps: UseCaseDeps, requestId: string) {
 
   // 2) pessoa, telefone e conta
   if (!dup.found) {
-    const res = await deps.uau.call(UAU_ROUTES.savePerson, buildSavePersonBody(profile, { user, now }))
+    const res = await deps.uau.call(UAU_ROUTES.savePerson, buildSavePersonBody(profile, { user, now, foundedAt: await foundedAt(deps, detail.supplier) }))
     calls.push({ ...res, description: 'GravarPessoa' })
     if (!res.simulated) {
       if (!res.ok) {
@@ -236,4 +236,12 @@ function uauMessage(data: unknown): string {
   const o = first as Record<string, unknown>
   const msg = [o.Descricao, o.Mensagem].find((v) => typeof v === 'string' && v.trim())
   return msg ? ` — ${String(msg).replace(/\s+/g, ' ').trim().slice(0, 300)}` : ''
+}
+
+/** Data de abertura do CNPJ (campo Fundação no UAU): a guardada na consulta da Receita, ou consulta de novo. */
+async function foundedAt(deps: UseCaseDeps, s: { document: string; personKind: string; receita: { dataAbertura: string | null } | null }) {
+  if (s.personKind !== 'PJ') return null
+  if (s.receita?.dataAbertura) return s.receita.dataAbertura
+  const company = await deps.company.find(s.document).catch(() => null)
+  return company?.dataAbertura ?? null
 }

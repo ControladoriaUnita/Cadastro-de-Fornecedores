@@ -42,7 +42,7 @@ export const isPermission = (v: unknown): v is Permission => (ALL_PERMISSIONS as
 
 /** Texto mostrado na tela de cargos, agrupado por área. */
 export const PERMISSION_INFO: Record<Permission, { group: string; label: string; description: string }> = {
-  'request.create': { group: 'Solicitações', label: 'Abrir solicitação', description: 'Pedir o cadastro de um fornecedor (busca de CNPJ em tempo real).' },
+  'request.create': { group: 'Solicitações', label: 'Abrir solicitação', description: 'Pré-cadastro do fornecedor (busca de CNPJ em tempo real); a solicitação cai para Suprimentos.' },
   'request.read.own': { group: 'Solicitações', label: 'Ver as próprias solicitações', description: 'Acompanhar os pedidos que abriu.' },
   'request.read.all': { group: 'Solicitações', label: 'Ver todas as solicitações', description: 'Kanban completo e pedidos de todos.' },
   'request.analyze': { group: 'Solicitações', label: 'Analisar cadastros', description: 'Convidar fornecedor, conferir documentos, rodar risco, pedir pendências, enviar para aprovação, recusar.' },
@@ -73,10 +73,10 @@ const P = PERMISSIONS
 /** Cargos criados na instalação (depois são editáveis no Painel dev, menos o dev). */
 export const DEFAULT_ROLES: RoleDefinition[] = [
   {
-    key: 'solicitante',
-    name: 'Solicitante',
-    description: 'Pede cadastros, acompanha os próprios e avalia fornecedores.',
-    permissions: [P.requestCreate, P.requestReadOwn, P.supplierRead, P.evaluationCreate, P.modelRead],
+    key: 'obra',
+    name: 'Obra',
+    description: 'Faz o pré-cadastro do fornecedor e acompanha as próprias solicitações.',
+    permissions: [P.requestCreate, P.requestReadOwn],
   },
   {
     key: 'analista',

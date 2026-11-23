@@ -52,7 +52,7 @@ export default function ValidationPage() {
         backTo={PATHS.validation}
         title={d.supplier.legalName}
         meta={<RequestStatusBadge status={d.status} />}
-        description={`nº ${d.number} · ${formatDocument(d.supplier.document)} · ${d.model.name}`}
+        description={`nº ${d.number} · ${formatDocument(d.supplier.document)} · ${d.model?.name ?? "—"}`}
         actions={
           <>
             <Link to={PATHS.request(d.id)}>

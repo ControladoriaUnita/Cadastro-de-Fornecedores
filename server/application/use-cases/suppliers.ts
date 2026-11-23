@@ -30,7 +30,7 @@ import { schema } from '../../infrastructure/db/client'
 import { AppError, IntegrationError, notFound, requirePermission } from '../context'
 import { toRiskCheck, toSupplierDetail } from '../mappers'
 import type { UseCaseDeps } from '../ports'
-import { loadDocuments, loadModel, userNames } from '../shared'
+import { loadDocuments, loadModel, notFromDroppedRequest, userNames } from '../shared'
 import { listCriteria, loadRiskConfigs } from './settings'
 import { checkUauPerson, findUauPerson } from './uau-people'
 
@@ -104,7 +104,8 @@ export async function listSuppliers(deps: UseCaseDeps): Promise<SupplierListItem
   const docs = await deps.db
     .select({ supplierId: documents.supplierId, expiresAt: documents.expiresAt })
     .from(documents)
-    .where(and(isNull(documents.replacedAt), sql`${documents.expiresAt} is not null`))
+    .leftJoin(requests, eq(requests.id, documents.requestId))
+    .where(and(isNull(documents.replacedAt), sql`${documents.expiresAt} is not null`, notFromDroppedRequest))
   const docBy = new Map<string, { expiring: number; expired: number }>()
   for (const d of docs) {
     const st = expiryState(d.expiresAt, today)
