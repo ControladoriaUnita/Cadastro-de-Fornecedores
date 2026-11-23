@@ -9,7 +9,7 @@
  *     pasta "<UAU_PASTA_ANEXOS>\<código> - <NOME>" (reaproveita a pasta se já existir)
  * Com UAU_GRAVACAO=simulacao nada é gravado: o resultado fica marcado como simulado.
  */
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
 import type { RequestDetailDTO, UauPreviewDTO } from '../../../shared/contracts'
 import { formatDocument } from '../../../shared/domain/document-number'
 import { PERMISSIONS } from '../../../shared/domain/roles'
@@ -33,6 +33,7 @@ import type { UauCallResult, UseCaseDeps } from '../ports'
 import { recordEvent } from '../shared'
 import { qualificationPdf } from './qualification'
 import { approvalBlockers, getRequest } from './requests'
+import { getSupplier } from './suppliers'
 import { checkUauPerson } from './uau-people'
 
 const { documents, requests, suppliers, users } = schema
@@ -299,6 +300,42 @@ export async function resendAttachments(deps: UseCaseDeps, requestId: string) {
   })
   if (!res.ok) throw new AppError('UAU_ATTACH_FAILED', `O UAU recusou os anexos. ${res.warning ?? ''}`.trim(), 502)
   return getRequest(deps, requestId)
+}
+
+/**
+ * Botão "Reenviar anexos ao UAU" na ficha do fornecedor: percorre as solicitações já gravadas no
+ * UAU (mais recente primeiro) e manda os documentos aprovados e os formulários que faltam.
+ */
+export async function resendSupplierAttachments(deps: UseCaseDeps, supplierId: string) {
+  requirePermission(deps.ctx.actor, PERMISSIONS.requestApprove)
+  const [s] = await deps.db.select({ uauCodPes: suppliers.uauCodPes }).from(suppliers).where(eq(suppliers.id, supplierId))
+  if (!s) throw new AppError('NOT_FOUND', 'Fornecedor não encontrado.', 404)
+  if (!s.uauCodPes) throw new AppError('NO_UAU_CODE', 'O fornecedor está sem o código da pessoa no UAU.', 409)
+  if (!deps.uau.writeEnabled) throw new AppError('UAU_SIMULATION', 'A gravação no UAU está em simulação (UAU_GRAVACAO=simulacao).', 409)
+  const inUau = await deps.db
+    .select({ id: requests.id })
+    .from(requests)
+    .where(and(eq(requests.supplierId, supplierId), eq(requests.status, 'gravado_uau'), eq(requests.uauSimulated, false)))
+    .orderBy(desc(requests.closedAt))
+  if (!inUau.length) throw new AppError('NOT_IN_UAU', 'Este fornecedor não tem solicitação gravada no UAU pelo app.', 409)
+
+  let total = 0
+  for (const { id } of inUau) {
+    const detail = await getRequest(deps, id)
+    const res = await attachPendingDocuments(deps, detail, s.uauCodPes, uauUser(), deps.ctx.now())
+    if (!res.count) continue
+    total += res.count
+    await recordEvent(deps.db, {
+      requestId: id,
+      actorId: deps.ctx.actor.id,
+      actorLabel: deps.ctx.actor.fullName,
+      kind: res.ok ? 'uau_attach' : 'uau_error',
+      comment: res.ok ? `${res.count} anexo(s) enviados ao UAU pela ficha do fornecedor (pessoa ${s.uauCodPes}).` : res.warning,
+    })
+    if (!res.ok) throw new AppError('UAU_ATTACH_FAILED', `O UAU recusou os anexos. ${res.warning ?? ''}`.trim(), 502)
+  }
+  if (!total) throw new AppError('NOTHING_PENDING', 'Todos os documentos aprovados e os formulários de qualificação já estão anexados no UAU.', 409)
+  return getSupplier(deps, supplierId)
 }
 
 const qualificationFileName = (n: number) => `Formulario de qualificacao - solicitacao ${n}.pdf`

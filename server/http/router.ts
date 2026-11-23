@@ -241,6 +241,7 @@ staff('POST', '/requests/:id/return', async (deps, c) => requests.returnToAnalys
 staff('GET', '/requests/:id/uau-preview', async (deps, c) => approval.uauPreview(deps, id(c)))
 staff('POST', '/requests/:id/approve', async (deps, c) => approval.approveRequest(deps, id(c)))
 staff('POST', '/requests/:id/uau-attachments', async (deps, c) => approval.resendAttachments(deps, id(c)))
+staff('POST', '/suppliers/:id/uau-attachments', async (deps, c) => approval.resendSupplierAttachments(deps, id(c)))
 staff('PUT', '/requests/:id/qualification', async (deps, c) => {
   await qualification.saveQualification(deps, id(c), parse(qualificationAnswersSchema, await c.json()))
   return requests.getRequest(deps, id(c))

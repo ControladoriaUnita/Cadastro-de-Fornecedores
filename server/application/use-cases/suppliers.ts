@@ -6,6 +6,7 @@ import { and, desc, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm'
 import type { z } from 'zod'
 import type {
   CompanyDTO,
+  DocumentDTO,
   DocumentLookupDTO,
   EvaluableSupplierDTO,
   EvaluationDTO,
@@ -33,6 +34,7 @@ import { AppError, can, IntegrationError, notFound, requirePermission } from '..
 import { toRiskCheck, toSupplierDetail } from '../mappers'
 import type { UseCaseDeps } from '../ports'
 import { loadDocuments, loadModel, notFromDroppedRequest, userNames } from '../shared'
+import { loadQualification } from './qualification'
 import { listCriteria, loadRiskConfigs } from './settings'
 import { checkUauPerson, findUauPerson } from './uau-people'
 
@@ -195,6 +197,7 @@ export async function getSupplier(deps: UseCaseDeps, id: string): Promise<Suppli
   ])
   const scores = supplierScores(evals, deps.ctx.now())
   return {
+    uauPending: await uauPendingFor(deps, id, docs),
     supplier: toSupplierDetail(row.s, row.modelName),
     documents: docs,
     riskChecks: risk,
@@ -203,6 +206,24 @@ export async function getSupplier(deps: UseCaseDeps, id: string): Promise<Suppli
     average: scores.overall,
     scores,
     requests: reqs.map((r) => ({ id: r.id, number: r.number, status: r.status as RequestStatus, createdAt: r.createdAt.toISOString() })),
+  }
+}
+
+/** Documentos aprovados e formulários de qualificação que ainda não foram anexados no UAU. */
+async function uauPendingFor(deps: UseCaseDeps, supplierId: string, docs: DocumentDTO[]): Promise<SupplierFullDTO['uauPending']> {
+  const inUau = await deps.db
+    .select({ id: requests.id, number: requests.number, qualificationUauAt: requests.qualificationUauAt })
+    .from(requests)
+    .where(and(eq(requests.supplierId, supplierId), eq(requests.status, 'gravado_uau'), eq(requests.uauSimulated, false)))
+  const forms: SupplierFullDTO['uauPending']['forms'] = []
+  for (const r of inUau) {
+    if (r.qualificationUauAt) continue
+    if ((await loadQualification(deps.db, r)).complete) forms.push({ requestId: r.id, number: r.number })
+  }
+  return {
+    hasUauRequest: inUau.length > 0,
+    documents: docs.filter((d) => d.reviewStatus === 'aprovado' && !d.replaced && !d.uauAttachedAt).map((d) => ({ id: d.id, label: `${d.documentTypeName} · ${d.fileName}` })),
+    forms,
   }
 }
 

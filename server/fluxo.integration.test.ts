@@ -327,10 +327,17 @@ describe('fluxo de cadastro (banco em memória)', () => {
     await expect(approval.resendAttachments(asApprover, r.id)).rejects.toMatchObject({ code: 'UAU_ATTACH_FAILED' })
     expect((await requests.getRequest(asApprover, r.id)).documents.filter((x) => !x.uauAttachedAt)).toHaveLength(2)
 
-    // UAU volta a aceitar: o botão manda os 2 pendentes, na pessoa certa
+    // a ficha do fornecedor mostra o mesmo que falta: 2 documentos + o formulário
+    const pending = (await suppliersUC.getSupplier(asApprover, d.supplier.id)).uauPending
+    expect([pending.hasUauRequest, pending.documents.length, pending.forms.map((x) => x.requestId)]).toEqual([true, 2, [r.id]])
+    await expect(approval.resendSupplierAttachments(asAnalyst, d.supplier.id)).rejects.toMatchObject({ status: 403 })
+
+    // UAU volta a aceitar: o botão da FICHA manda os pendentes, na pessoa certa
     failAttach = false
     uauCalls.length = 0
-    const resent = await approval.resendAttachments(asApprover, r.id)
+    const fromSupplier = await approval.resendSupplierAttachments(asApprover, d.supplier.id)
+    expect(fromSupplier.uauPending).toEqual({ hasUauRequest: true, documents: [], forms: [] })
+    const resent = await requests.getRequest(asApprover, r.id)
     expect(resent.documents.every((x) => !!x.uauAttachedAt)).toBe(true)
     const body = uauCalls.find((c) => c.route.endsWith('AnexarArquivosBase64Request'))?.body
     // 2 documentos + o PDF do formulário de qualificação
@@ -339,8 +346,9 @@ describe('fluxo de cadastro (banco em memória)', () => {
     expect(resent.qualification.uauAttachedAt).not.toBeNull()
     expect(resent.events.some((e) => e.kind === 'uau_attach')).toBe(true)
 
-    // sem pendentes: não reenvia de novo
+    // sem pendentes: nenhum dos dois botões reenvia de novo
     await expect(approval.resendAttachments(asApprover, r.id)).rejects.toMatchObject({ code: 'NOTHING_PENDING' })
+    await expect(approval.resendSupplierAttachments(asApprover, d.supplier.id)).rejects.toMatchObject({ code: 'NOTHING_PENDING' })
   })
 
   it('médias de avaliação: geral e do mês no Painel, na lista e na ficha', async () => {

@@ -12,6 +12,7 @@ import { DocumentList } from '@/components/domain/DocumentList'
 import { ProfileView } from '@/components/domain/ProfileView'
 import { RequestStatusBadge, RiskBadge, SupplierStatusBadge } from '@/components/domain/badges'
 import { EvaluationDialog } from '@/components/domain/EvaluationDialog'
+import { SupplierResendAttachments } from '@/components/domain/ResendAttachments'
 import { RiskPanel } from '@/components/domain/RiskPanel'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Alert, Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, Kpi, Select, Skeleton, Tabs } from '@/components/ui'
@@ -66,6 +67,9 @@ export default function SupplierPage() {
           )
         }
       />
+      <div className="mb-6 empty:hidden">
+        <SupplierResendAttachments data={q.data} onDone={set} />
+      </div>
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Kpi label="Média geral" value={scores.overall === null ? '—' : formatScore(scores.overall)} hint={`${scores.overallCount} avaliação(ões) no total`} />
         <Kpi

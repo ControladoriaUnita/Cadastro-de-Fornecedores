@@ -448,6 +448,13 @@ export interface SupplierFullDTO {
   average: number | null
   /** Média geral, média do mês e histórico dos últimos 12 meses */
   scores: SupplierScores
+  /** O que ainda não chegou ao UAU (botão "Reenviar anexos ao UAU" na ficha) */
+  uauPending: {
+    /** Há solicitação gravada no UAU de verdade (sem ela não há para onde reenviar) */
+    hasUauRequest: boolean
+    documents: { id: string; label: string }[]
+    forms: { requestId: string; number: number }[]
+  }
   requests: { id: string; number: number; status: RequestStatus; createdAt: string }[]
 }
 
