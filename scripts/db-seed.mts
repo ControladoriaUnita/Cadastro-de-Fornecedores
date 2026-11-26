@@ -4,6 +4,8 @@
  *  - sugestão de tipos de documento, modelos e critérios (editáveis no Painel dev)
  *  - regras de risco com a gravidade padrão
  *
+ * Documentos e modelos por tipo de fornecedor: supplier-docs-catalog.mts
+ *
  * Uso: npm run db:seed  (DEV_EMAIL=voce@unitaengenharia.com.br npm run db:seed)
  */
 import { existsSync } from 'node:fs'
@@ -11,6 +13,7 @@ import { neon } from '@neondatabase/serverless'
 import { drizzle } from 'drizzle-orm/neon-http'
 import { defaultRuleConfigs } from '../shared/domain/risk'
 import * as s from '../server/infrastructure/db/schema'
+import { DOC_TYPES, MODELS } from './supplier-docs-catalog.mjs'
 
 if (existsSync('.env.local')) process.loadEnvFile('.env.local')
 const db = drizzle(neon(process.env.DATABASE_URL!), { schema: s })
@@ -22,54 +25,6 @@ const USERS = [
   { email: 'obra.teste@unitaengenharia.com.br', fullName: 'Obra (teste)', roles: ['obra'] },
   { email: 'analista.teste@unitaengenharia.com.br', fullName: 'Analista (teste)', roles: ['analista'] },
   { email: 'aprovador.teste@unitaengenharia.com.br', fullName: 'Aprovador (teste)', roles: ['aprovador'] },
-]
-
-const DOC_TYPES = [
-  { name: 'Cartão CNPJ', description: 'Comprovante de inscrição e situação cadastral (Receita Federal).', hasExpiry: false },
-  { name: 'Contrato social / última alteração', description: 'Ato constitutivo e última alteração consolidada.', hasExpiry: false },
-  { name: 'CND Federal (Receita/PGFN)', description: 'Certidão de débitos relativos a tributos federais e dívida ativa.', hasExpiry: true, defaultValidityDays: 180 },
-  { name: 'CRF — FGTS', description: 'Certificado de regularidade do FGTS (Caixa).', hasExpiry: true, defaultValidityDays: 30 },
-  { name: 'CNDT — Débitos trabalhistas', description: 'Certidão negativa de débitos trabalhistas (TST).', hasExpiry: true, defaultValidityDays: 180 },
-  { name: 'Certidão estadual', description: 'Regularidade com a Fazenda Estadual.', hasExpiry: true, defaultValidityDays: 90 },
-  { name: 'Certidão municipal', description: 'Regularidade com a Fazenda Municipal.', hasExpiry: true, defaultValidityDays: 90 },
-  { name: 'Comprovante bancário', description: 'Cabeçalho de extrato ou declaração do banco com titularidade da conta.', hasExpiry: false },
-  { name: 'Documento do responsável', description: 'RG ou CNH do sócio/representante legal.', hasExpiry: false },
-  { name: 'CCMEI', description: 'Certificado da condição de microempreendedor individual.', hasExpiry: false },
-  { name: 'Registro no CREA/CAU', description: 'Registro da empresa e do responsável técnico.', hasExpiry: true, defaultValidityDays: 365 },
-  { name: 'PGR / PCMSO', description: 'Programas de gerenciamento de riscos e de saúde ocupacional.', hasExpiry: true, defaultValidityDays: 365 },
-]
-
-const MODELS: { name: string; description: string; personKind: string; cnae: string[]; docs: string[]; optional?: string[] }[] = [
-  {
-    name: 'Fornecedor de materiais',
-    description: 'Venda de materiais de construção e insumos.',
-    personKind: 'PJ',
-    cnae: [],
-    docs: ['Cartão CNPJ', 'Contrato social / última alteração', 'CND Federal (Receita/PGFN)', 'CRF — FGTS', 'CNDT — Débitos trabalhistas', 'Comprovante bancário'],
-    optional: ['Certidão estadual'],
-  },
-  {
-    name: 'Empreiteiro / prestador de serviço de obra',
-    description: 'Mão de obra e serviços executados no canteiro.',
-    personKind: 'PJ',
-    cnae: ['41', '42', '43'],
-    docs: ['Cartão CNPJ', 'Contrato social / última alteração', 'CND Federal (Receita/PGFN)', 'CRF — FGTS', 'CNDT — Débitos trabalhistas', 'Certidão municipal', 'Comprovante bancário', 'PGR / PCMSO', 'Documento do responsável'],
-    optional: ['Registro no CREA/CAU'],
-  },
-  {
-    name: 'MEI',
-    description: 'Microempreendedor individual.',
-    personKind: 'PJ',
-    cnae: [],
-    docs: ['Cartão CNPJ', 'CCMEI', 'CND Federal (Receita/PGFN)', 'Comprovante bancário', 'Documento do responsável'],
-  },
-  {
-    name: 'Pessoa física',
-    description: 'Autônomo / pessoa física.',
-    personKind: 'PF',
-    cnae: [],
-    docs: ['Documento do responsável', 'Comprovante bancário'],
-  },
 ]
 
 const CRITERIA = [
@@ -99,14 +54,10 @@ if (!(await db.select({ id: s.supplierModels.id }).from(s.supplierModels)).lengt
       .insert(s.supplierModels)
       .values({ name: m.name, description: m.description, personKind: m.personKind, expectedCnaePrefixes: m.cnae })
       .returning()
-    const reqs = [
-      ...m.docs.map((n) => ({ name: n, required: true })),
-      ...(m.optional ?? []).map((n) => ({ name: n, required: false })),
-    ]
     await db.insert(s.modelRequirements).values(
-      reqs
-        .filter((r) => docId(r.name))
-        .map((r, i) => ({ modelId: model!.id, documentTypeId: docId(r.name)!, required: r.required, sort: i })),
+      m.reqs
+        .filter((r) => docId(r.doc))
+        .map((r, i) => ({ modelId: model!.id, documentTypeId: docId(r.doc)!, required: r.required, instructions: r.instructions ?? null, sort: i })),
     )
   }
 }

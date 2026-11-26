@@ -27,7 +27,7 @@ import { AppError, notFound, requirePermission, requireModule } from '../context
 import { toModel } from '../mappers'
 import type { UseCaseDeps } from '../ports'
 
-const { documentTypes, evaluationCriteria, modelRequirements, riskRuleConfigs, roles, supplierModels, users } = schema
+const { documentTypes, evaluationCriteria, modelRequirements, requests, riskRuleConfigs, roles, supplierModels, suppliers, users } = schema
 const manage = (deps: UseCaseDeps) => requirePermission(deps.ctx.actor, PERMISSIONS.settingsManage)
 
 // ----------------------------------------------------------------------------- tipos de documento
@@ -118,6 +118,22 @@ export async function saveModel(deps: UseCaseDeps, id: string | null, input: z.i
     )
   }
   return (await loadAllModels(deps.db)).find((m) => m.id === modelId)!
+}
+
+/** Exclui um modelo que nunca foi usado; modelo já usado por fornecedor ou solicitação só pode ser desativado. */
+export async function deleteModel(deps: UseCaseDeps, id: string): Promise<{ ok: true }> {
+  manage(deps)
+  const [model] = await deps.db.select().from(supplierModels).where(eq(supplierModels.id, id))
+  const module = currentModule(deps)
+  if (!model || (model.personKind !== 'ambos' && model.personKind !== MODULE_INFO[module].personKind)) throw notFound('Modelo de fornecedor')
+  const usedBySuppliers = (await deps.db.select({ id: suppliers.id }).from(suppliers).where(eq(suppliers.modelId, id))).length
+  const usedByRequests = (await deps.db.select({ id: requests.id }).from(requests).where(eq(requests.modelId, id))).length
+  if (usedBySuppliers || usedByRequests) {
+    const parts = [usedBySuppliers && `${usedBySuppliers} cadastro(s)`, usedByRequests && `${usedByRequests} solicitação(ões)`].filter(Boolean).join(' e ')
+    throw new AppError('MODEL_IN_USE', `Este modelo está em uso por ${parts}. Desative-o em vez de excluir.`, 409)
+  }
+  await deps.db.delete(supplierModels).where(eq(supplierModels.id, id))
+  return { ok: true }
 }
 
 // ----------------------------------------------------------------------------- critérios de avaliação

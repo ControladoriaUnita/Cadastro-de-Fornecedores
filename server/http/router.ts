@@ -338,6 +338,7 @@ staff('GET', '/evaluate/suppliers', async (deps, c) => suppliersUC.searchEvaluab
 staff('GET', '/models', async (deps, c) => settings.listModels(deps, { onlyActive: c.url.searchParams.get('active') === '1', module: c.url.searchParams.get('module') ? moduleParam(c) : undefined }))
 staff('POST', '/models', async (deps, c) => settings.saveModel(deps, null, parse(modelSchema, await c.json())), 201)
 staff('PUT', '/models/:id', async (deps, c) => settings.saveModel(deps, id(c), parse(modelSchema, await c.json())))
+staff('DELETE', '/models/:id', async (deps, c) => settings.deleteModel(deps, id(c)))
 staff('GET', '/document-types', (deps) => settings.listDocumentTypes(deps))
 staff('POST', '/document-types', async (deps, c) => settings.saveDocumentType(deps, null, parse(documentTypeSchema, await c.json())), 201)
 staff('PUT', '/document-types/:id', async (deps, c) => settings.saveDocumentType(deps, id(c), parse(documentTypeSchema, await c.json())))
