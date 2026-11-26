@@ -5,7 +5,7 @@ import type { DocumentTypeDTO, ModelDTO } from '@shared/contracts'
 import { MODULE_INFO, type Module } from '@shared/domain/modules'
 import { PERMISSIONS } from '@shared/domain/roles'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { Alert, Badge, Button, Card, CardBody, CardHeader, Dialog, EmptyState, Field, Input, Select, Skeleton, Textarea } from '@/components/ui'
+import { Alert, Badge, Button, Card, CardBody, CardHeader, ConfirmDialog, Dialog, EmptyState, Field, Input, Select, Skeleton, Textarea } from '@/components/ui'
 import { api, errorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 
@@ -159,6 +159,15 @@ export default function ModelsPage({ module = 'pj' }: { module?: Module }) {
   const { can } = useAuth()
   const edit = can(PERMISSIONS.settingsManage)
   const [editing, setEditing] = useState<ModelDTO | 'new' | null>(null)
+  const [removing, setRemoving] = useState<ModelDTO | null>(null)
+  const qc = useQueryClient()
+  const del = useMutation({
+    mutationFn: (id: string) => api(`/models/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['models'] })
+      setRemoving(null)
+    },
+  })
   const models = useQuery({ queryKey: ['models', module], queryFn: () => api<ModelDTO[]>(`/models?module=${module}`) })
   const types = useQuery({ queryKey: ['document-types', module], queryFn: () => api<DocumentTypeDTO[]>('/document-types') })
 
@@ -195,6 +204,11 @@ export default function ModelsPage({ module = 'pj' }: { module?: Module }) {
                         <Pencil className="size-4" />
                       </Button>
                     )}
+                    {edit && (
+                      <Button size="sm" variant="ghost" aria-label={`Excluir ${m.name}`} onClick={() => (del.reset(), setRemoving(m))}>
+                        <Trash2 className="size-4 text-error" />
+                      </Button>
+                    )}
                   </>
                 }
               />
@@ -215,6 +229,18 @@ export default function ModelsPage({ module = 'pj' }: { module?: Module }) {
       ) : (
         <EmptyState title="Nenhum modelo" />
       )}
+      <ConfirmDialog
+        open={!!removing}
+        tone="danger"
+        title={`Excluir o modelo "${removing?.name}"?`}
+        description="O modelo e a lista de documentos dele deixam de existir. Esta ação não pode ser desfeita. Modelo já usado em cadastro ou solicitação não pode ser excluído: desative-o."
+        confirmLabel="Excluir"
+        loading={del.isPending}
+        onConfirm={() => removing && del.mutate(removing.id)}
+        onCancel={() => setRemoving(null)}
+      >
+        {del.isError && <Alert tone="error">{errorMessage(del.error)}</Alert>}
+      </ConfirmDialog>
       {editing && types.data && <ModelEditor module={module} model={editing === 'new' ? null : editing} types={types.data} onClose={() => setEditing(null)} />}
     </>
   )
