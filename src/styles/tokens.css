@@ -41,6 +41,12 @@
   --color-error: #c62828;    --color-error-soft: #fdecec;
   --color-info: #2563a8;     --color-info-soft: #e8f0fa;
 
+  /* Logo Microsoft (botão "Entrar com Microsoft 365" — cores oficiais da marca Microsoft) */
+  --color-ms-red: #f25022;
+  --color-ms-green: #7fba00;
+  --color-ms-blue: #00a4ef;
+  --color-ms-yellow: #ffb900;
+
   /* Tipografia */
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-display: 'Sora', 'Inter', ui-sans-serif, system-ui, sans-serif;

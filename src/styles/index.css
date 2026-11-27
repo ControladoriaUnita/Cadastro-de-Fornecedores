@@ -15,4 +15,11 @@
   dialog::backdrop { background: rgb(26 24 23 / 0.45); }
 }
 
+@theme {
+  --animate-fade-in: fade-in 0.25s ease-out;
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(6px); }
+  }
+}
+
 @utility tabular { font-variant-numeric: tabular-nums; }
