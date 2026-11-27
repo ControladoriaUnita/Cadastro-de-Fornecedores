@@ -5,7 +5,6 @@ import { LogIn } from 'lucide-react'
 import type { AuthConfigDTO, DevUserOption } from '@shared/contracts'
 import logoWhite from '@/assets/brand/logo-unita-white.png'
 import pattern from '@/assets/brand/pattern-un.png'
-import symbol from '@/assets/brand/symbol-un-orange.png'
 import { Alert, Button, Spinner } from '@/components/ui'
 import { api, errorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -13,7 +12,7 @@ import { useAuth } from '@/lib/auth'
 /**
  * Entrada da equipe: Microsoft (produção) ou seletor de usuário (localhost, AUTH_MODE=dev).
  * Layout no modelo do Relatório de Aporte (painel da marca à esquerda, acesso à direita),
- * com a identidade Unità: painel grafite, logo branco, padrão "UN" a 7% e o laranja só como acento.
+ * com a identidade Unità: painel grafite, logo branco, padrão "UN" a 7% e o laranja só como acento (faixa no topo).
  * No celular o painel vira uma faixa no topo.
  */
 export function LoginPage() {
@@ -126,7 +125,7 @@ export function LoginPage() {
   )
 }
 
-/** Painel da marca: grafite, logo branco oficial, padrão "UN" como textura e o símbolo laranja como grafismo. */
+/** Painel da marca: grafite, logo branco oficial, padrão "UN" como textura e a faixa laranja no topo. */
 function BrandPanel() {
   return (
     <aside className="relative flex items-center gap-14 overflow-hidden bg-secondary bg-[radial-gradient(900px_520px_at_0%_0%,rgb(255_255_255/0.08),transparent_60%)] px-6 py-7 text-white md:flex-col md:items-start md:px-16 md:py-14">
@@ -146,13 +145,6 @@ function BrandPanel() {
           Solicitação, homologação e gravação no UAU em um só fluxo.
         </p>
       </div>
-
-      <img
-        src={symbol}
-        alt=""
-        aria-hidden
-        className="pointer-events-none absolute right-4 bottom-4 w-20 md:right-12 md:bottom-12 md:w-[min(180px,34%)]"
-      />
     </aside>
   )
 }
